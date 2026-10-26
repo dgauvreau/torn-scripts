@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.16
+// @version      6.17
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -294,11 +294,20 @@
     return Math.max(1, Math.min(sliderMax(), v));
   }
 
+  // Lowest level shown: its own slider (remembered), default 1, never above the max.
+  function minLevel() {
+    if (myLevel === null) return 1;
+    let v = NaN;
+    try { v = parseInt(localStorage.getItem('ht_min_level'), 10); } catch (e) {}
+    if (isNaN(v)) v = 1;
+    return Math.max(1, Math.min(limitLevel(), v));
+  }
+
   // True if the API details say this person should be dropped.
   function excluded(p) {
     if (!p || typeof p !== 'object') return false; // details unavailable: keep
     if (USE_FACTION_FILTER && p.faction && p.faction.faction_id) return true;
-    if (USE_LEVEL_LIMIT && myLevel !== null && p.level > limitLevel()) return true;
+    if (USE_LEVEL_LIMIT && myLevel !== null && (p.level > limitLevel() || p.level < minLevel())) return true;
     const left = apiLeft(p);
     if (left !== null && left > MAX_SECONDS) return true; // the API says they are in much longer than the page claimed
     return false;
@@ -404,21 +413,26 @@
     panel.appendChild(head);
 
     if (USE_LEVEL_LIMIT && myLevel !== null) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:4px;color:#aaa;';
-      const lab = document.createElement('span');
-      const sl = document.createElement('input');
-      sl.type = 'range'; sl.min = 1; sl.max = sliderMax(); sl.value = limitLevel();
-      sl.style.cssText = 'flex:1;min-width:0;';
-      const setLab = () => { lab.textContent = 'Max level ' + sl.value + (+sl.value === myLevel ? ' (you)' : ''); };
-      setLab();
-      sl.addEventListener('input', setLab);
-      sl.addEventListener('change', () => {
-        try { localStorage.setItem('ht_max_level', sl.value); } catch (e) {}
-        lastSig = null; tick();
-      });
-      row.appendChild(lab); row.appendChild(sl);
-      panel.appendChild(row);
+      const mkSlider = (word, key, get, lo, hi) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:4px;color:#aaa;';
+        const lab = document.createElement('span');
+        lab.style.cssText = 'min-width:84px;';
+        const sl = document.createElement('input');
+        sl.type = 'range'; sl.min = lo(); sl.max = hi(); sl.value = get();
+        sl.style.cssText = 'flex:1;min-width:0;';
+        const setLab = () => { lab.textContent = word + ' level ' + sl.value + (+sl.value === myLevel ? ' (you)' : ''); };
+        setLab();
+        sl.addEventListener('input', setLab);
+        sl.addEventListener('change', () => {
+          try { localStorage.setItem(key, sl.value); } catch (e) {}
+          lastSig = null; tick();
+        });
+        row.appendChild(lab); row.appendChild(sl);
+        panel.appendChild(row);
+      };
+      mkSlider('Min', 'ht_min_level', minLevel, () => 1, () => sliderMax());
+      mkSlider('Max', 'ht_max_level', limitLevel, () => 1, () => sliderMax());
     }
 
     const dg = document.createElement('div');
@@ -510,9 +524,9 @@
     const onPage = collectTargets();
     onPage.forEach((t) => { if (!kept.has(t.id)) kept.set(t.id, t); });
     let found = [...kept.values()].filter((t) => !excluded(cache[t.id]));
-    if (USE_LEVEL_LIMIT && myLevel !== null) found = found.filter((t) => t.lvl === null || t.lvl <= limitLevel());
+    if (USE_LEVEL_LIMIT && myLevel !== null) found = found.filter((t) => t.lvl === null || (t.lvl <= limitLevel() && t.lvl >= minLevel()));
     candidateCount = found.length;
-    diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · up to level ' + limitLevel() + ': ' + found.length : '');
+    diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · levels ' + minLevel() + '–' + limitLevel() + ': ' + found.length : '');
     // Lowest level first when the level limit is on, otherwise soonest out first.
     found.sort((a, b) => {
       if (!USE_LEVEL_LIMIT) return a.secs - b.secs;
@@ -522,7 +536,7 @@
     });
     found = found.slice(0, MAX_LOOKUPS);
 
-    const sig = limitLevel() + ':' + found.map((t) => t.id).join(',') + (found.length ? '' : (looksLoading() ? '|loading' : '|none'));
+    const sig = minLevel() + '-' + limitLevel() + ':' + found.map((t) => t.id).join(',') + (found.length ? '' : (looksLoading() ? '|loading' : '|none'));
     if (sig !== lastSig) {
       lastSig = sig;
       render(found, new Date());
