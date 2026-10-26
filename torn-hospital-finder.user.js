@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.15
+// @version      6.16
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -12,7 +12,7 @@
   'use strict';
 
   const LEVEL_BUFFER = 0;   // allow targets this many levels above you (0 = your level or lower)
-  const LEVEL_RANGE = 15;   // the slider goes this many levels above your own level
+  const LEVEL_RANGE_PCT = 0.10; // the slider goes this far above your own level (10%, at least 1 level)
   const USE_LEVEL_LIMIT = true;     // only people at or below your level (+ LEVEL_BUFFER)
   const USE_FACTION_FILTER = true;  // skip people in a faction
   const MAX_SECONDS = 600;  // skip anyone with more than this left in hospital (checked on the page AND against the API)
@@ -285,7 +285,7 @@
 
   // Highest level shown: the slider value (remembered), default = your level; the slider's
   // upper end always follows your level (your level + LEVEL_RANGE).
-  function sliderMax() { return myLevel === null ? null : myLevel + LEVEL_RANGE; }
+  function sliderMax() { return myLevel === null ? null : myLevel + Math.max(1, Math.ceil(myLevel * LEVEL_RANGE_PCT)); }
   function limitLevel() {
     if (myLevel === null) return null;
     let v = NaN;
