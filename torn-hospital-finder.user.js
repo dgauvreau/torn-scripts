@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.12
+// @version      6.13
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -250,10 +250,10 @@
       }
     });
     const pg = pageInfo();
-    pageNote = pg.cur === null ? 'page: unknown' : 'page ' + pg.cur + (pg.max !== null ? ' (highest shown ' + pg.max + ')' : '');
-    if (pg.cur !== null && pg.max !== null && pg.cur < pg.max) pageNote += ' ⚠ not the last page';
+    pageNote = pg.cur === null ? 'page ?' : 'page ' + pg.cur;
+    const pagerNote = pg.max !== null ? ' (pager shows up to ' + pg.max + ')' : '';
     lastTargets = targets;
-    diag = pageNote + ' · rows: ' + rows.length + ' · readable time: ' + withTime +
+    diag = pageNote + pagerNote + ' · rows: ' + rows.length + ' · readable time: ' + withTime +
       (withTime ? ' · times ' + fmtLeft(shortestOnPage) + ' to ' + fmtLeft(longestOnPage) : '') +
       ' · over ' + Math.round(MAX_SECONDS / 60) + 'm: ' + tooLong +
       (USE_FACTION_FILTER ? ' · kept (no faction): ' : ' · kept: ') + targets.length;
@@ -313,6 +313,11 @@
   const boxes = {};
   let countEl = null;
   let dgEl = null;
+  let diagOpen = false;
+  function diagText() {
+    if (diagOpen) return diag + ' · my level: ' + (myLevel === null ? 'unknown' : myLevel) + ' (tap to hide)';
+    return pageNote + ' · ' + kept.size + ' found · tap for details';
+  }
   // True while the page still doesn't look like the end of the hospital list
   // (pager not on the last page yet, no rows yet, or only long-time rows showing).
   function looksLoading() {
@@ -365,8 +370,9 @@
     panel.appendChild(head);
 
     const dg = document.createElement('div');
-    dg.style.cssText = 'color:#6a6;margin-top:2px;';
-    dg.textContent = diag + ' · my level: ' + (myLevel === null ? 'unknown' : myLevel);
+    dg.style.cssText = 'color:#777;margin-top:2px;cursor:pointer;';
+    dg.textContent = diagText();
+    dg.addEventListener('click', (e) => { e.stopPropagation(); diagOpen = !diagOpen; dg.textContent = diagText(); });
     panel.appendChild(dg);
     dgEl = dg;
 
@@ -475,7 +481,7 @@
         });
       }
     } else {
-      if (dgEl) dgEl.textContent = diag + ' · my level: ' + (myLevel === null ? 'unknown' : myLevel);
+      if (dgEl) dgEl.textContent = diagText();
     }
   }
 
