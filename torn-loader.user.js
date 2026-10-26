@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Torn Find Target (loader)
 // @namespace    torn-hospital-targets-loader
-// @version      1.0
+// @version      1.1
 // @description  Paste this into Torn PDA once. It fetches the latest Torn Find Target script from GitHub on every page load, so updates never need re-pasting.
 // @match        https://www.torn.com/*
 // @run-at       document-end
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (function () {
@@ -50,11 +51,35 @@
     }
   }
 
-  fetch(SCRIPT_URL + '?t=' + Date.now(), { cache: 'no-store' })
-    .then((r) => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    })
+  // Torn's CSP blocks fetch() to GitHub from the page, so use the app's own HTTP bridge instead:
+  // Torn PDA -> PDA_httpGet, Tampermonkey -> GM_xmlhttpRequest, last resort -> plain fetch.
+  function getText(url) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (typeof PDA_httpGet === 'function') {
+          PDA_httpGet(url).then((r) => {
+            const t = r && (r.responseText != null ? r.responseText : r);
+            if (r && r.status && r.status >= 400) reject(new Error('HTTP ' + r.status));
+            else resolve(String(t));
+          }, reject);
+          return;
+        }
+        if (typeof GM_xmlhttpRequest === 'function') {
+          GM_xmlhttpRequest({
+            method: 'GET', url,
+            onload: (r) => (r.status >= 400 ? reject(new Error('HTTP ' + r.status)) : resolve(r.responseText)),
+            onerror: () => reject(new Error('network error')),
+          });
+          return;
+        }
+      } catch (e) { /* fall through to fetch */ }
+      fetch(url, { cache: 'no-store' })
+        .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(resolve, reject);
+    });
+  }
+
+  getText(SCRIPT_URL + '?t=' + Date.now())
     .then((code) => {
       if (!/==UserScript==/.test(code)) throw new Error('unexpected file');
       if (run(code)) {
