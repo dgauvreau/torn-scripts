@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.13
+// @version      6.14
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -84,6 +84,26 @@
     'display:flex;align-items:center;justify-content:center;' +
     'background:transparent;border:0;color:#aeaeae;cursor:pointer;';
 
+  // Desktop layout: Torn's header has a toolbar of icons ending with the avatar, with free dark
+  // space to its right, so the icon sits just right of the avatar. On a phone there is no room
+  // there, so the original spot above (between the header icons) is used instead.
+  function headerStyle() {
+    const av = document.querySelector('ul.toolbar li.avatar');
+    if (!av) return STYLE_HEADER;
+    const r = av.getBoundingClientRect();
+    if (!r.width || r.right + 4 + 30 > window.innerWidth - 4) return STYLE_HEADER;
+    let fixed = false;
+    for (let e = av; e && e !== document.documentElement; e = e.parentElement) {
+      if (getComputedStyle(e).position === 'fixed') { fixed = true; break; }
+    }
+    const top = Math.round(r.top + (r.height - 30) / 2) + (fixed ? 0 : window.scrollY);
+    const left = Math.round(r.right + 4) + (fixed ? 0 : window.scrollX);
+    return 'position:' + (fixed ? 'fixed' : 'absolute') + ';top:' + top + 'px;left:' + left + 'px;' +
+      'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'background:transparent;border:0;color:#aeaeae;cursor:pointer;';
+  }
+
   // Safety net: if the icon can't actually be seen at its spot (covered by
   // something, or off screen), switch to its own row at the top of the page.
   let forceRow = false;
@@ -103,17 +123,19 @@
 
     if (forceRow) {
       if (inlineBtn.parentNode !== host || host.firstChild !== inlineBtn) host.insertBefore(inlineBtn, host.firstChild);
-      if (inlineBtn.style.position === 'absolute') inlineBtn.style.cssText = STYLE_ROW;
+      if (inlineBtn.style.position) { inlineBtn.style.cssText = STYLE_ROW; inlineBtn.dataset.st = ''; }
       return;
     }
     if (inlineBtn.parentNode !== host) host.appendChild(inlineBtn);
-    if (inlineBtn.style.position !== 'absolute') inlineBtn.style.cssText = STYLE_HEADER;
+    const st = headerStyle();
+    if (inlineBtn.dataset.st !== st) { inlineBtn.style.cssText = st; inlineBtn.dataset.st = st; }
     // Only judge visibility at the top of the page (scrolled away isn't a failure).
     if (document.readyState === 'complete' && window.scrollY < 5 && !pillVisible()) { forceRow = true; ensureUI(); }
   }
   ensureUI();
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
+  window.addEventListener('resize', ensureUI);
   setInterval(ensureUI, 2000);
 
   // ---- parsing helpers ---------------------------------------------------
