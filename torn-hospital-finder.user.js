@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.11
+// @version      6.12
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -530,7 +530,13 @@
     const pg = pageInfo();
     const onLast = pg.cur !== null && pg.max !== null && pg.cur >= pg.max;
     const last = findLastPageLink();
-    if (last && !onLast && !/active|current|selected/i.test(last.className)) last.click();
+    if (last && !onLast && !/active|current|selected/i.test(last.className)) {
+      // If the last-page link makes Torn reload the whole page, this flag makes the new page scan too
+      // (the way the earliest versions did). It is cleared a few seconds later if no reload happens.
+      sessionStorage.setItem(FLAG, '1');
+      last.click();
+      setTimeout(() => sessionStorage.removeItem(FLAG), 8000);
+    }
     startLive();
   }
 
