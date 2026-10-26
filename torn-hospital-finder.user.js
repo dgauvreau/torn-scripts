@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.14
+// @version      6.15
 // @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -12,6 +12,7 @@
   'use strict';
 
   const LEVEL_BUFFER = 0;   // allow targets this many levels above you (0 = your level or lower)
+  const LEVEL_RANGE = 15;   // the slider goes this many levels above your own level
   const USE_LEVEL_LIMIT = true;     // only people at or below your level (+ LEVEL_BUFFER)
   const USE_FACTION_FILTER = true;  // skip people in a faction
   const MAX_SECONDS = 600;  // skip anyone with more than this left in hospital (checked on the page AND against the API)
@@ -282,11 +283,22 @@
     return targets;
   }
 
+  // Highest level shown: the slider value (remembered), default = your level; the slider's
+  // upper end always follows your level (your level + LEVEL_RANGE).
+  function sliderMax() { return myLevel === null ? null : myLevel + LEVEL_RANGE; }
+  function limitLevel() {
+    if (myLevel === null) return null;
+    let v = NaN;
+    try { v = parseInt(localStorage.getItem('ht_max_level'), 10); } catch (e) {}
+    if (isNaN(v)) v = myLevel + LEVEL_BUFFER;
+    return Math.max(1, Math.min(sliderMax(), v));
+  }
+
   // True if the API details say this person should be dropped.
   function excluded(p) {
     if (!p || typeof p !== 'object') return false; // details unavailable: keep
     if (USE_FACTION_FILTER && p.faction && p.faction.faction_id) return true;
-    if (USE_LEVEL_LIMIT && myLevel !== null && p.level > myLevel + LEVEL_BUFFER) return true;
+    if (USE_LEVEL_LIMIT && myLevel !== null && p.level > limitLevel()) return true;
     const left = apiLeft(p);
     if (left !== null && left > MAX_SECONDS) return true; // the API says they are in much longer than the page claimed
     return false;
@@ -391,6 +403,24 @@
     head.appendChild(smallBtn('Close', closePanel));
     panel.appendChild(head);
 
+    if (USE_LEVEL_LIMIT && myLevel !== null) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:4px;color:#aaa;';
+      const lab = document.createElement('span');
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = 1; sl.max = sliderMax(); sl.value = limitLevel();
+      sl.style.cssText = 'flex:1;min-width:0;';
+      const setLab = () => { lab.textContent = 'Max level ' + sl.value + (+sl.value === myLevel ? ' (you)' : ''); };
+      setLab();
+      sl.addEventListener('input', setLab);
+      sl.addEventListener('change', () => {
+        try { localStorage.setItem('ht_max_level', sl.value); } catch (e) {}
+        lastSig = null; tick();
+      });
+      row.appendChild(lab); row.appendChild(sl);
+      panel.appendChild(row);
+    }
+
     const dg = document.createElement('div');
     dg.style.cssText = 'color:#777;margin-top:2px;cursor:pointer;';
     dg.textContent = diagText();
@@ -480,9 +510,9 @@
     const onPage = collectTargets();
     onPage.forEach((t) => { if (!kept.has(t.id)) kept.set(t.id, t); });
     let found = [...kept.values()].filter((t) => !excluded(cache[t.id]));
-    if (USE_LEVEL_LIMIT && myLevel !== null) found = found.filter((t) => t.lvl === null || t.lvl <= myLevel + LEVEL_BUFFER);
+    if (USE_LEVEL_LIMIT && myLevel !== null) found = found.filter((t) => t.lvl === null || t.lvl <= limitLevel());
     candidateCount = found.length;
-    diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · at or below your level: ' + found.length : '');
+    diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · up to level ' + limitLevel() + ': ' + found.length : '');
     // Lowest level first when the level limit is on, otherwise soonest out first.
     found.sort((a, b) => {
       if (!USE_LEVEL_LIMIT) return a.secs - b.secs;
@@ -492,7 +522,7 @@
     });
     found = found.slice(0, MAX_LOOKUPS);
 
-    const sig = found.map((t) => t.id).join(',') + (found.length ? '' : (looksLoading() ? '|loading' : '|none'));
+    const sig = limitLevel() + ':' + found.map((t) => t.id).join(',') + (found.length ? '' : (looksLoading() ? '|loading' : '|none'));
     if (sig !== lastSig) {
       lastSig = sig;
       render(found, new Date());
