@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Hospital Alert
 // @namespace    torn-hospital-alert
-// @version      1.2
+// @version      1.3
 // @description  Warns you when your hospital release is close, so you can heal out (medical items) before the timer runs out and you're released into easy-target territory. Tells you when one First Aid Kit (40 min) or one Small First Aid Kit (20 min) would get you out, then an amber warning, then a red flashing bar with vibration. Uses the official API (user > profile, any key works).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,6 +22,7 @@
   const SLOW_POLL_MS = 60000;      // how often to check your status normally
   const FAST_POLL_MS = 15000;      // how often once release is within FAST_WITHIN_SEC
   const FAST_WITHIN_SEC = FAK_SEC + 300;
+  const VERSION = '1.3';
   const ITEMS_URL = 'https://www.torn.com/item.php';   // where to go to use medical items
 
   // ---- API key -----------------------------------------------------------
@@ -90,6 +91,13 @@
   let level = '';
   close.addEventListener('click', (e) => { e.stopPropagation(); if (level) dismissed[level] = true; render(); });
 
+  // A small quiet status pill (bottom-left) so you can tell the script is running: it shows the version and
+  // the time left while you're in hospital, or what went wrong if the check fails. Hidden when not in hospital.
+  const pill = document.createElement('div');
+  pill.style.cssText =
+    'display:none;position:fixed;left:6px;bottom:6px;z-index:2147483645;max-width:70vw;padding:3px 9px;' +
+    'background:rgba(26,26,26,.85);color:#bbb;border:1px solid #555;border-radius:10px;font:11px sans-serif;pointer-events:none;';
+
   // A small panel that only shows when there's no usable API key.
   const setup = document.createElement('div');
   setup.style.cssText =
@@ -133,12 +141,19 @@
     if (!host) return;
     if (bar.parentNode !== host) host.appendChild(bar);
     if (setup.parentNode !== host) host.appendChild(setup);
+    if (pill.parentNode !== host) host.appendChild(pill);
   }
 
   function mmss(s) {
     s = Math.max(0, s);
     const m = Math.floor(s / 60), r = s % 60;
     return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  function longTime(s) {
+    s = Math.max(0, s);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? h + 'h ' + m + 'm' : m + 'm ' + (s % 60) + 's';
   }
 
   function alertUser(lvl, text) {
@@ -162,6 +177,18 @@
     }
 
     const left = until ? until - nowSec() : 0;
+
+    // Status pill: confirms the script is alive, or shows why a check failed (key problems have their own panel).
+    if (problem && !needKey) {
+      pill.textContent = 'Hospital Alert ' + VERSION + ' \u00b7 ' + (problem.code === 5 ? 'rate limited, retrying' : 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : ''));
+      pill.style.display = 'block';
+    } else if (left > 0) {
+      pill.textContent = 'Hospital Alert ' + VERSION + ' \u00b7 out in ' + longTime(left);
+      pill.style.display = 'block';
+    } else {
+      pill.style.display = 'none';
+    }
+
     let cur = null;
     if (left > 0) LEVELS.forEach((L) => { if (left <= L.sec) cur = L; }); // smallest matching level wins
     level = cur ? cur.key : '';
