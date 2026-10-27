@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.4
+// @version      2.5
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -21,11 +21,9 @@
   const OPEN_REFRESH_MS = 30 * 1000;              // when opening the list, refresh if older than this
 
   // ---- API key -----------------------------------------------------------
-  // Uses a key saved here, else the Torn PDA key (placeholder below), else the one the
-  // Find Target loader stored ('ht_api_key'). If those can't read attacks, the list offers
-  // a shortcut to make a key of its own.
+  // Uses a key saved here, else the Torn PDA key (placeholder below). It deliberately never reads another
+  // script's saved key. If the Torn PDA key can't read attacks, the list offers a shortcut to make a key of its own.
   const OWN_SLOT = 'ta_key';
-  const SHARED_SLOT = 'ht_api_key';
   const CACHE_SLOT = 'tr_cache';
   // Opens Torn's "add new key" form with user > attacks pre-filled.
   const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=attacks&title=RetributionKey';
@@ -34,7 +32,7 @@
   const pdaKey = (PDA_KEY && !PDA_KEY.startsWith('###')) ? PDA_KEY : '';
   function readSlot(slot) { try { return localStorage.getItem(slot) || ''; } catch (e) { return ''; } }
   let ownKey = readSlot(OWN_SLOT);
-  const getKey = () => ownKey || pdaKey || readSlot(SHARED_SLOT);
+  const getKey = () => ownKey || pdaKey;
 
   // ---- time --------------------------------------------------------------
   const nowSec = () => Math.floor(Date.now() / 1000);

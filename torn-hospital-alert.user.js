@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Hospital Alert
 // @namespace    torn-hospital-alert
-// @version      1.0
+// @version      1.1
 // @description  Warns you when your hospital release is close, so you can heal out (medical items) before the timer runs out and you're released into easy-target territory. Amber warning first, then a red flashing bar with vibration. Uses the official API (user > profile, any key works).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,16 +22,15 @@
 
   // ---- API key -----------------------------------------------------------
   // Any key works (this only reads your own status). Uses a key saved here, else the Torn PDA key
-  // (placeholder below), else the one the Find Target loader stored ('ht_api_key').
+  // (placeholder below). It deliberately never reads another script's saved key.
   const OWN_SLOT = 'hr_key';
-  const SHARED_SLOT = 'ht_api_key';
   // Opens Torn's "add new key" form with user > profile pre-filled.
   const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=profile&title=HospitalKey';
   const PDA_KEY = '###PDA-APIKEY###';
   const pdaKey = (PDA_KEY && !PDA_KEY.startsWith('###')) ? PDA_KEY : '';
   function readSlot(slot) { try { return localStorage.getItem(slot) || ''; } catch (e) { return ''; } }
   let ownKey = readSlot(OWN_SLOT);
-  const getKey = () => ownKey || pdaKey || readSlot(SHARED_SLOT);
+  const getKey = () => ownKey || pdaKey;
 
   // ---- state -------------------------------------------------------------
   const nowSec = () => Math.floor(Date.now() / 1000);
