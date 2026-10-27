@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      3.1
+// @version      3.2
 // @description  Adds a "Retribution List" button at the top of the log dropdown (the clipboard icon in the header) and under the title of the log page. Tap it to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -324,16 +324,32 @@
   // ---- log dropdown button -----------------------------------------------
   // The clipboard icon in Torn's header opens a dropdown of your latest log entries that ends in a "View Log"
   // link. The button goes at the top of that dropdown. Class names there are random, so the panel is found by
-  // what it holds: the smallest container around the "View Log" text that also holds the time stamps of several
-  // log rows (4m, 2h ...). Torn rebuilds the dropdown every time it opens, so keep checking.
+  // what it holds, starting from the "View Log" text (or a link to the log page) and going up: the first container
+  // that holds the time stamps of several log rows (4m, 2h ...) or, failing that, the first one that is tall like
+  // the dropdown. Torn rebuilds the dropdown every time it opens, so keep checking.
   const TIME_RE = /^\d+\s*[smhd]$/i;
+  const VIEW_LOG_RE = /^view\s*log$/i;
+  function countTimes(root) {
+    let n = 0;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) if (TIME_RE.test(t.data.replace(/\u00a0/g, ' ').trim())) n++;
+    return n;
+  }
   function findLogPanel() {
-    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
-    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
-      if (!/^view log$/i.test(t.data.trim())) continue;
-      for (let p = t.parentElement, depth = 0; p && p !== document.body && depth < 10; p = p.parentElement, depth++) {
-        const times = Array.prototype.filter.call(p.querySelectorAll('*'), (n) => n.children.length === 0 && TIME_RE.test(n.textContent.trim()));
-        if (times.length >= 2) return p;
+    const spots = []; // { el, tall }: where to start climbing, and whether the tall-container fallback may be used
+    const w = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (t.parentElement && VIEW_LOG_RE.test(t.data.replace(/\u00a0/g, ' ').trim())) spots.push({ el: t.parentElement, tall: true });
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('a[href*="sid=log"]'), (a) => spots.push({ el: a, tall: false }));
+    for (let i = 0; i < spots.length; i++) {
+      const root = document.body || document.documentElement;
+      for (let p = spots[i].el.parentElement, depth = 0; p && p !== root && p !== document.documentElement && depth < 12; p = p.parentElement, depth++) {
+        if (countTimes(p) >= 2) return p;
+        if (spots[i].tall) {
+          const r = p.getBoundingClientRect();
+          if (r.height >= 200 && r.width >= 150) return p;
+        }
       }
     }
     return null;
