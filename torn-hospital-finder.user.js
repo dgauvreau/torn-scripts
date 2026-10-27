@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.20
+// @version      6.21
 // @description  "Find target" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -47,7 +47,7 @@
   const btn = document.createElement('button');
 
   const inlineBtn = document.createElement('button');
-  inlineBtn.textContent = 'Find target';
+  inlineBtn.textContent = 'Find Target Patients';
   inlineBtn.style.cssText =
     'display:block;margin:4px auto;padding:6px 14px;background:#333;color:#ddd;' +
     'border:1px solid #777;border-radius:14px;font:13px sans-serif;cursor:pointer;';
