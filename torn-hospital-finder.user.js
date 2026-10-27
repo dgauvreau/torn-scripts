@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.26
-// @description  Target icon in the header linking to your targets list, plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
+// @version      6.27
+// @description  Target icon in the header linking to your targets list (with the live chain countdown shown on that page), plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -205,6 +205,47 @@
   window.addEventListener('load', ensureLink);
   window.addEventListener('resize', ensureLink);
   setInterval(ensureLink, 2000);
+
+  // ---- chain timer on the targets page -------------------------------------
+  // Copies the countdown from Torn's own sidebar chain bar onto the targets list page, so you can see
+  // how long the chain has left while picking targets. Reads the page only: no API calls.
+  const CHAIN_WARN_SECONDS = 60; // the timer turns red below this
+  const chainBox = document.createElement('div');
+  chainBox.setAttribute('data-chain-timer', '1');
+  chainBox.style.cssText =
+    'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:2147483646;padding:6px 12px;' +
+    'border-radius:14px;background:#1a1a1a;border:1px solid #555;font:bold 14px sans-serif;color:#fff;' +
+    'white-space:nowrap;pointer-events:none;';
+  function onTargetsPage() {
+    return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
+  }
+  // { secs, value } from the sidebar chain bar, or null when there is no running chain.
+  function readChain() {
+    const bar = document.querySelector('[class*="chain-bar"]');
+    if (!bar) return null;
+    const tEl = bar.querySelector('[class*="bar-timeleft"]');
+    const tm = ((tEl ? tEl.textContent : bar.textContent) || '').match(/\d+:\d+(?::\d+)?/);
+    const secs = tm ? parseSeconds(tm[0]) : null;
+    if (secs === null || secs <= 0) return null;
+    const vEl = bar.querySelector('[class*="bar-value"]');
+    const vm = ((vEl ? vEl.textContent : bar.textContent) || '').match(/\d+\s*\/\s*\d+/);
+    return { secs, value: vm ? vm[0].replace(/\s+/g, '') : '' };
+  }
+  function ensureChain() {
+    if (!onTargetsPage()) { if (chainBox.parentNode) chainBox.remove(); return; }
+    const host = document.body || document.documentElement;
+    if (!host) return;
+    if (chainBox.parentNode !== host) host.appendChild(chainBox);
+    const c = readChain();
+    if (!c) { chainBox.textContent = 'Chain: none'; chainBox.style.color = '#999'; return; }
+    const p2 = (n) => String(n).padStart(2, '0');
+    chainBox.textContent = 'Chain ' + (c.value ? c.value + ' · ' : '') + Math.floor(c.secs / 60) + ':' + p2(c.secs % 60);
+    chainBox.style.color = c.secs < CHAIN_WARN_SECONDS ? '#ff5b5b' : '#fff';
+  }
+  ensureChain();
+  document.addEventListener('DOMContentLoaded', ensureChain);
+  window.addEventListener('load', ensureChain);
+  setInterval(ensureChain, 1000);
 
   // ---- parsing helpers ---------------------------------------------------
   function parseSeconds(text) {
