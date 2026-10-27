@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Halloween Basket
 // @namespace    torn-halloween-basket
-// @version      1.1
+// @version      1.2
 // @description  During the Halloween season, adds a pumpkin icon to Torn's top icon row. Tap it to jump to your basket on the Items page: it scrolls to the basket, highlights it and opens its options so "Use" is one tap away. No API key needed.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -20,7 +20,7 @@
   const ITEMS_URL = 'https://www.torn.com/item.php#special-items';
   const FLAG = 'hb_open_basket';
   const BASKET_RE = /^Halloween Basket/i;   // matches every basket tier (Spooky ... Apocalyptic)
-  const WAIT_MS = 10000;           // how long to wait for the item list to load
+  const WAIT_MS = 15000;           // how long to wait for the item list to load
   const ENTRY_LABEL = 'Halloween Basket';
 
   function inSeason() {
@@ -66,10 +66,25 @@
   }
 
   // ---- find and open the basket on the Items page --------------------------
+  const BASKET_ANY = /halloween\s+basket/i;
+  function isShown(el) { return !!(el && (el.offsetParent !== null || el.getClientRects().length)); }
+  function allRows() {
+    return Array.prototype.slice.call(document.querySelectorAll('li[data-sort], li[data-item], ul.items-cont > li, [class*="items-cont"] li'));
+  }
   function findBasket() {
-    return Array.prototype.slice.call(document.querySelectorAll('li[data-sort]')).find(
-      (l) => BASKET_RE.test(l.getAttribute('data-sort') || '') && l.offsetParent !== null
-    );
+    const rows = allRows();
+    // 1) exact data attribute, 2) any row mentioning the basket by name (attribute, label or text)
+    let hit = rows.find((l) => BASKET_RE.test(l.getAttribute('data-sort') || '') && isShown(l));
+    if (!hit) {
+      hit = rows.find((l) => {
+        if (!isShown(l)) return false;
+        const t = (l.getAttribute('data-sort') || '') + ' ' + (l.getAttribute('aria-label') || '') + ' ' +
+          ((l.querySelector('[aria-label]') || {}).getAttribute ? l.querySelector('[aria-label]').getAttribute('aria-label') : '') + ' ' +
+          (l.querySelector('img') ? l.querySelector('img').getAttribute('alt') || '' : '') + ' ' + (l.textContent || '').slice(0, 200);
+        return BASKET_ANY.test(t);
+      });
+    }
+    return hit;
   }
   let opening = false;
   async function openBasket() {
@@ -81,16 +96,24 @@
       li = findBasket();
       if (!li) await sleep(250);
     }
+    // Not found: only say so once the item list has really loaded, and re-check once more first.
     if (!li) {
-      showToast('No Halloween Basket found in your items.', sweetShopHref(), sweetShopHref() ? 'Get one at the Sweet Shop' : '');
+      await sleep(1500);
+      li = findBasket();
+    }
+    if (!li) {
+      if (allRows().length > 3 && !BASKET_ANY.test((document.body && document.body.textContent) || '')) {
+        showToast('No Halloween Basket found in your items.', sweetShopHref(), sweetShopHref() ? 'Get one at the Sweet Shop' : '');
+      }
       opening = false;
       return;
     }
+    toast.style.display = 'none';
     li.scrollIntoView({ block: 'center' });
     li.style.outline = '2px solid #f80';
     // Open the item's options (where "Use" lives) unless they're already open. Nothing is used for you.
     if (!/\bopened\b/.test(li.className)) {
-      const opt = li.querySelector('.item-options');
+      const opt = li.querySelector('.item-options, [class*="item-options"], [class*="itemOptions"]');
       if (opt) opt.click();
     }
     opening = false;
