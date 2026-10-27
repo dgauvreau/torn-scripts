@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.28
-// @description  Target icon in the header linking to your targets list (with the live chain countdown shown on that page), plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
+// @version      6.29
+// @description  Target icon in the header linking to your targets list (with the live chain countdown shown on that page). On the hospital page only, a Find Target panel scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -42,7 +42,7 @@
 
   // ---- UI ----------------------------------------------------------------
   // The click logic lives on `btn`, which is never shown on the page.
-  // The "Find Target" entry in Torn's navigation menu (added below) triggers it.
+  // The Scan button in the panel on the hospital page triggers it.
   const btn = document.createElement('button');
 
   const panel = document.createElement('div');
@@ -81,66 +81,6 @@
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
   setInterval(ensureUI, 2000);
-
-  // ---- navigation menu entry (every page) ------------------------------------
-  // Torn's menu is a list of rows, each an <a> holding an icon and a label (class names carry a
-  // random suffix, so match on the stable prefixes). We copy an ordinary row, e.g. "Home", relabel
-  // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
-  const ENTRY_ATTR = 'data-find-target-entry';
-  const ENTRY_LABEL = 'Find Target';
-  function findMenu() {
-    const names = ['Home', 'Items', 'City', 'Gym', 'Crimes'];
-    const spans = Array.prototype.slice.call(document.querySelectorAll('[class*="linkName"]'));
-    for (let i = 0; i < names.length; i++) {
-      const span = spans.find((x) => x.textContent.trim() === names[i]);
-      const a = span && span.closest('a');
-      if (!a || !a.parentElement || !a.parentElement.parentElement || !a.parentElement.parentElement.parentElement) continue;
-      const row = a.parentElement;               // the row holding the <a>
-      const area = row.parentElement;            // one menu item
-      const container = area.parentElement;      // the whole list
-      if (area.querySelectorAll('a').length !== 1) continue; // want a plain entry, not an expandable group
-      // Where our entry goes: right after the "Items" entry (falls back to the end of the list).
-      const itemsSpan = spans.find((x) => x.textContent.trim() === 'Items');
-      const itemsRow = itemsSpan && itemsSpan.closest('a') && itemsSpan.closest('a').parentElement;
-      const itemsArea = itemsRow && itemsRow.parentElement;
-      const anchor = itemsArea && itemsArea.parentElement === container ? itemsArea : null;
-      return { anchor, area, container };
-    }
-    return null;
-  }
-  function ensureEntry() {
-    const m = findMenu();
-    if (!m) return;
-    if (m.container.querySelector('[' + ENTRY_ATTR + ']')) return;
-    const clone = m.area.cloneNode(true);
-    clone.setAttribute(ENTRY_ATTR, '1');
-    clone.className = String(clone.className).replace(/\S*active\S*/g, '').trim(); // never look like the current page
-    Array.prototype.forEach.call(clone.querySelectorAll('*'), (n) => {
-      if (typeof n.className === 'string' && /active/i.test(n.className)) n.className = n.className.replace(/\S*active\S*/gi, '').trim();
-      n.removeAttribute('id');
-    });
-    const a = clone.querySelector('a');
-    a.setAttribute('href', '#');
-    a.removeAttribute('target');
-    a.removeAttribute('aria-current');
-    const iconBox = clone.querySelector('[class*="defaultIcon"]') || clone.querySelector('[class*="svgIconWrap"]');
-    if (iconBox) {
-      iconBox.textContent = '';
-      const ic = document.createElement('span');
-      ic.style.cssText = 'font-size:13px;line-height:14px;display:inline-block;';
-      ic.textContent = '\ud83c\udfaf';
-      iconBox.appendChild(ic);
-    }
-    clone.querySelector('[class*="linkName"]').textContent = ENTRY_LABEL;
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); btn.click(); }, true);
-    if (m.anchor) m.container.insertBefore(clone, m.anchor.nextSibling); // right after Items
-    else m.container.appendChild(clone);
-  }
-  // The menu is rebuilt by Torn at times (page changes, opening the hamburger), so keep checking.
-  ensureEntry();
-  document.addEventListener('DOMContentLoaded', ensureEntry);
-  window.addEventListener('load', ensureEntry);
-  setInterval(ensureEntry, 1500);
 
   // ---- targets-list shortcut (global header, every page) -------------------
   // A small target icon in the header row that opens your Torn targets list.
