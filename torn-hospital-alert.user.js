@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Hospital Alert
 // @namespace    torn-hospital-alert
-// @version      1.3
+// @version      1.4
 // @description  Warns you when your hospital release is close, so you can heal out (medical items) before the timer runs out and you're released into easy-target territory. Tells you when one First Aid Kit (40 min) or one Small First Aid Kit (20 min) would get you out, then an amber warning, then a red flashing bar with vibration. Uses the official API (user > profile, any key works).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,8 +22,7 @@
   const SLOW_POLL_MS = 60000;      // how often to check your status normally
   const FAST_POLL_MS = 15000;      // how often once release is within FAST_WITHIN_SEC
   const FAST_WITHIN_SEC = FAK_SEC + 300;
-  const VERSION = '1.3';
-  const ITEMS_URL = 'https://www.torn.com/item.php';   // where to go to use medical items
+  const VERSION = '1.4';
 
   // ---- API key -----------------------------------------------------------
   // Any key works (this only reads your own status). Uses a key saved here, else the Torn PDA key
@@ -78,15 +77,10 @@
     'display:none;position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:8px 36px 8px 10px;' +
     'font:bold 15px sans-serif;text-align:center;color:#fff;box-sizing:border-box;';
   const msg = document.createElement('span');
-  const go = document.createElement('a');
-  go.href = ITEMS_URL;
-  go.textContent = 'Heal now →';
-  go.style.cssText = 'margin-left:10px;padding:2px 10px;background:#fff;color:#000;border-radius:12px;text-decoration:none;font-size:13px;white-space:nowrap;';
   const close = document.createElement('span');
   close.textContent = '×';
   close.style.cssText = 'position:absolute;right:0;top:0;padding:6px 12px;font-size:22px;cursor:pointer;';
   bar.appendChild(msg);
-  bar.appendChild(go);
   bar.appendChild(close);
   let level = '';
   close.addEventListener('click', (e) => { e.stopPropagation(); if (level) dismissed[level] = true; render(); });
