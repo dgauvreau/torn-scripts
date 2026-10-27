@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Halloween Basket
 // @namespace    torn-halloween-basket
-// @version      1.0
-// @description  During the Halloween season, adds a "Halloween Basket" entry to Torn's navigation menu (right after Items). Tap it to jump to your basket on the Items page: it scrolls to the basket, highlights it and opens its options so "Use" is one tap away. No API key needed.
+// @version      1.1
+// @description  During the Halloween season, adds a pumpkin icon to Torn's top icon row. Tap it to jump to your basket on the Items page: it scrolls to the basket, highlights it and opens its options so "Use" is one tap away. No API key needed.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -96,77 +96,73 @@
     opening = false;
   }
 
-  // ---- menu entry --------------------------------------------------------
-  // Torn's menu is a list of rows, each an <a> holding an icon and a label (class names carry a
-  // random suffix, so match on the stable prefixes). We copy an ordinary row, e.g. "Home", relabel
-  // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look
-  // on phone and desktop.
-  const ENTRY_ATTR = 'data-halloween-basket-entry';
-  function findMenu() {
-    const names = ['Home', 'Items', 'City', 'Gym', 'Crimes'];
-    const spans = Array.prototype.slice.call(document.querySelectorAll('[class*="linkName"]'));
-    for (let i = 0; i < names.length; i++) {
-      const span = spans.find((x) => x.textContent.trim() === names[i]);
-      const a = span && span.closest('a');
-      if (!a || !a.parentElement || !a.parentElement.parentElement || !a.parentElement.parentElement.parentElement) continue;
-      const row = a.parentElement;               // the row holding the <a>
-      const area = row.parentElement;            // one menu item
-      const container = area.parentElement;      // the whole list
-      if (area.querySelectorAll('a').length !== 1) continue; // want a plain entry, not an expandable group
-      // Where our entry goes: right after the "Items" entry (falls back to the end of the list).
-      const itemsSpan = spans.find((x) => x.textContent.trim() === 'Items');
-      const itemsRow = itemsSpan && itemsSpan.closest('a') && itemsSpan.closest('a').parentElement;
-      const itemsArea = itemsRow && itemsRow.parentElement;
-      const anchor = itemsArea && itemsArea.parentElement === container ? itemsArea : null;
-      return { anchor, area, container };
+  // ---- header icon -------------------------------------------------------
+  // A pumpkin in Torn's top icon row. On a phone it sits in the header row between the menu button and the
+  // search icon; on a wide screen it sits just past the avatar at the end of the toolbar.
+  const icon = document.createElement('a');
+  icon.href = ITEMS_URL;
+  icon.title = ENTRY_LABEL;
+  icon.setAttribute('aria-label', ENTRY_LABEL);
+  icon.textContent = '\ud83c\udf83';
+  const ICON_TOP_PX = 2;         // distance below the top of the header (phone layout)
+  const ICON_CENTER_PCT = 34.5;  // horizontal centre, as a % of screen width (phone layout)
+  const DESKTOP_GAP_PX = 38;     // distance past the avatar (wide layout), leaving room for other header icons
+  const ICON_BASE =
+    'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;display:flex;align-items:center;' +
+    'justify-content:center;background:transparent;border:0;font-size:20px;line-height:1;cursor:pointer;text-decoration:none;';
+  function isFixed(el) {
+    for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
+      if (getComputedStyle(e).position === 'fixed') return true;
     }
-    return null;
+    return false;
   }
-  function ensureEntry() {
-    const m = findMenu();
-    if (!m) return;
-    if (m.container.querySelector('[' + ENTRY_ATTR + ']')) return;
-    const clone = m.area.cloneNode(true);
-    clone.setAttribute(ENTRY_ATTR, '1');
-    clone.className = String(clone.className).replace(/\S*active\S*/g, '').trim(); // never look like the current page
-    Array.prototype.forEach.call(clone.querySelectorAll('*'), (n) => {
-      if (typeof n.className === 'string' && /active/i.test(n.className)) n.className = n.className.replace(/\S*active\S*/gi, '').trim();
-      n.removeAttribute('id');
-    });
-    const a = clone.querySelector('a');
-    a.setAttribute('href', ITEMS_URL);
-    a.removeAttribute('target');
-    a.removeAttribute('aria-current');
-    const iconBox = clone.querySelector('[class*="defaultIcon"]') || clone.querySelector('[class*="svgIconWrap"]');
-    if (iconBox) {
-      iconBox.textContent = '';
-      const ic = document.createElement('span');
-      ic.style.cssText = 'font-size:13px;line-height:14px;display:inline-block;';
-      ic.textContent = '🎃';
-      iconBox.appendChild(ic);
+  // Banners other scripts add can push the header down, so measure where it actually is.
+  function phoneStyle() {
+    const h = document.querySelector('#header-root') || document.querySelector('.header-wrapper-top');
+    let top = ICON_TOP_PX, pos = 'absolute';
+    if (h) {
+      const r = h.getBoundingClientRect();
+      const fixed = isFixed(h);
+      pos = fixed ? 'fixed' : 'absolute';
+      top = Math.round(r.top + (fixed ? 0 : window.scrollY)) + ICON_TOP_PX;
     }
-    clone.querySelector('[class*="linkName"]').textContent = ENTRY_LABEL;
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (onItems) {
-        try { location.hash = '#special-items'; } catch (x) {}
-        openBasket();
-      } else {
-        try { sessionStorage.setItem(FLAG, '1'); } catch (x) {}
-        location.href = ITEMS_URL;
-      }
-    }, true);
-    if (m.anchor) m.container.insertBefore(clone, m.anchor.nextSibling); // right after Items
-    else m.container.appendChild(clone);
+    return 'position:' + pos + ';top:' + top + 'px;left:calc(' + ICON_CENTER_PCT + '% - 15px);' + ICON_BASE;
   }
-  // The menu is rebuilt by Torn at times (page changes, opening the hamburger), so keep checking.
-  ensureEntry();
-  document.addEventListener('DOMContentLoaded', ensureEntry);
-  window.addEventListener('load', ensureEntry);
-  setInterval(ensureEntry, 1500);
+  function iconStyle() {
+    const av = document.querySelector('ul.toolbar li.avatar');
+    if (!av) return phoneStyle();
+    const r = av.getBoundingClientRect();
+    if (!r.width || r.right + DESKTOP_GAP_PX + 30 > window.innerWidth - 4) return phoneStyle();
+    const fixed = isFixed(av);
+    const top = Math.round(r.top + (r.height - 30) / 2) + (fixed ? 0 : window.scrollY);
+    const left = Math.round(r.right + DESKTOP_GAP_PX) + (fixed ? 0 : window.scrollX);
+    return 'position:' + (fixed ? 'fixed' : 'absolute') + ';top:' + top + 'px;left:' + left + 'px;' + ICON_BASE;
+  }
+  function ensureIcon() {
+    const host = document.body || document.documentElement;
+    if (!host) return;
+    if (icon.parentNode !== host) host.appendChild(icon);
+    const st = iconStyle();
+    if (icon.dataset.st !== st) { icon.style.cssText = st; icon.dataset.st = st; }
+  }
+  icon.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onItems) {
+      try { location.hash = '#special-items'; } catch (x) {}
+      openBasket();
+    } else {
+      try { sessionStorage.setItem(FLAG, '1'); } catch (x) {}
+      location.href = ITEMS_URL;
+    }
+  });
+  ensureIcon();
+  document.addEventListener('DOMContentLoaded', ensureIcon);
+  window.addEventListener('load', ensureIcon);
+  window.addEventListener('resize', ensureIcon);
+  setInterval(ensureIcon, 2000);
 
-  // Arrived from another page via the menu entry: open the basket now.
+  // Arrived from another page via the icon: open the basket now.
   let flagged = false;
   try { flagged = onItems && sessionStorage.getItem(FLAG) === '1'; sessionStorage.removeItem(FLAG); } catch (e) { flagged = false; }
   if (flagged) openBasket();
