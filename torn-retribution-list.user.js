@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.7
-// @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
+// @version      2.8
+// @description  Adds a "Retribution List" entry to Torn's navigation menu and a button at the top of the Events page. Tap either on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -307,10 +307,20 @@
   // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
   const ENTRY_ATTR = 'data-retribution-entry';
   let badge = null;
+  // Button at the top of the Events page (added further down); it shows the same count as the menu entry.
+  const eventsBtn = document.createElement('button');
+  eventsBtn.type = 'button';
+  eventsBtn.setAttribute('data-retribution-events-btn', '1');
+  eventsBtn.style.cssText =
+    'display:inline-block;margin:6px 0;padding:6px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;' +
+    'border-radius:12px;font:bold 13px sans-serif;cursor:pointer;';
+  eventsBtn.textContent = '\u2694 ' + ENTRY_LABEL;
+  eventsBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openList(); });
   function updateBadge() {
-    if (!badge) return;
     const n = data && data.list ? data.list.length : 0;
-    badge.textContent = n ? ' (' + n + ')' : '';
+    const t = n ? ' (' + n + ')' : '';
+    if (badge) badge.textContent = t;
+    eventsBtn.textContent = '\u2694 ' + ENTRY_LABEL + t;
   }
   function findMenu() {
     const names = ['Home', 'Items', 'City', 'Gym', 'Crimes'];
@@ -364,6 +374,28 @@
   document.addEventListener('DOMContentLoaded', ensureEntry);
   window.addEventListener('load', ensureEntry);
   setInterval(ensureEntry, 1500);
+
+  // ---- events page button ------------------------------------------------
+  // On the Events page the button sits right under the page title (falls back to the top of the page
+  // content if the title can't be found). Torn redraws the page at times, so keep checking.
+  function onEventsPage() {
+    return /events\.php/.test(location.pathname) || /[?&]sid=events/.test(location.search);
+  }
+  function ensureEventsBtn() {
+    if (!onEventsPage()) { if (eventsBtn.parentNode) eventsBtn.remove(); return; }
+    const title = document.querySelector('.content-title, [class*="content-title"]');
+    if (title && title.parentNode) {
+      if (eventsBtn.previousElementSibling !== title) title.insertAdjacentElement('afterend', eventsBtn);
+    } else {
+      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer');
+      if (host && eventsBtn.parentNode !== host) host.insertBefore(eventsBtn, host.firstChild);
+    }
+    updateBadge();
+  }
+  ensureEventsBtn();
+  document.addEventListener('DOMContentLoaded', ensureEventsBtn);
+  window.addEventListener('load', ensureEventsBtn);
+  setInterval(ensureEventsBtn, 1500);
 
   // Keep the count in the menu entry fresh without waiting for a tap.
   function backgroundRefresh() {
