@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.0
+// @version      2.1
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -168,8 +168,71 @@
   }
   function btn(text, onclick) {
     const b = el('button', 'margin:0 4px;padding:3px 14px;background:#333;color:#ddd;border:1px solid #9d9;border-radius:10px;font:12px sans-serif;', text);
-    b.addEventListener('click', (e) => { e.stopPropagation(); onclick(); });
+    b.addEventListener('click', (e) => { e.stopPropagation(); onclick(b); });
     return b;
+  }
+
+  // ---- copy to clipboard -------------------------------------------------
+  // Plain text carries "Name [id] - profile link" per line (works pasted anywhere); the rich version
+  // makes each name a clickable profile link where the app accepts formatted text.
+  const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
+  function listText() {
+    const lines = ['Retribution List (last ' + WINDOW_DAYS + ' days)'];
+    data.list.forEach((e) => lines.push(e.name + ' [' + e.id + '] - ' + profileUrl(e.id) + (e.count > 1 ? ' (x' + e.count + ')' : '')));
+    return lines.join('\n');
+  }
+  function listHtml() {
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const lines = ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'];
+    data.list.forEach((e) => lines.push('<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + (e.count > 1 ? ' (x' + e.count + ')' : '')));
+    return lines.join('<br>');
+  }
+  function flash(b, msg) {
+    const old = b.textContent;
+    b.textContent = msg;
+    setTimeout(() => { if (b.isConnected) b.textContent = old; }, 1800);
+  }
+  // Last resort when the app blocks clipboard access: show the text selected so it can be copied by hand.
+  function showManualCopy(text) {
+    const ta = el('textarea', 'display:block;width:100%;height:120px;margin-top:8px;background:#111;color:#eee;border:1px solid #777;border-radius:6px;font:11px monospace;box-sizing:border-box;');
+    ta.value = text;
+    ta.readOnly = true;
+    sheet.appendChild(ta);
+    ta.focus();
+    ta.select();
+  }
+  async function copyList(b) {
+    if (!data || !data.list.length) return;
+    const text = listText(), html = listHtml();
+    try {
+      if (navigator.clipboard && window.ClipboardItem && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        })]);
+        flash(b, 'Copied ✓');
+        return;
+      }
+    } catch (e) { /* try the next way */ }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        flash(b, 'Copied ✓');
+        return;
+      }
+    } catch (e) { /* try the next way */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) { flash(b, 'Copied ✓'); return; }
+    } catch (e) { /* fall through */ }
+    showManualCopy(text);
   }
 
   function setupBlock(msg) {
@@ -219,7 +282,10 @@
 
     const foot = el('div', 'margin-top:10px;padding-top:6px;border-top:1px solid #444;font-size:11px;color:#888;display:flex;justify-content:space-between;align-items:center;');
     foot.appendChild(el('span', '', 'Updated ' + ago(data.ts) + (data.hidden ? ' · ' + data.hidden + ' anonymous not shown' : '')));
-    foot.appendChild(btn(busy ? 'Refreshing…' : 'Refresh', () => refresh(true)));
+    const acts = el('span', '');
+    if (data.list.length) acts.appendChild(btn('Copy list', copyList));
+    acts.appendChild(btn(busy ? 'Refreshing…' : 'Refresh', () => refresh(true)));
+    foot.appendChild(acts);
     sheet.appendChild(foot);
   }
 
