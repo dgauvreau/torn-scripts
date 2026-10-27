@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.1
+// @version      2.2
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -177,15 +177,14 @@
   // makes each name a clickable profile link where the app accepts formatted text.
   const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
   function listText() {
-    const lines = ['Retribution List (last ' + WINDOW_DAYS + ' days)'];
-    data.list.forEach((e) => lines.push(e.name + ' [' + e.id + '] - ' + profileUrl(e.id) + (e.count > 1 ? ' (x' + e.count + ')' : '')));
-    return lines.join('\n');
+    // Blank line after the title and between players; the profile link sits on its own line under each name.
+    const blocks = data.list.map((e) => e.name + ' [' + e.id + ']' + (e.count > 1 ? ' - ' + e.count + ' attacks' : '') + '\n' + profileUrl(e.id));
+    return ['Retribution List (last ' + WINDOW_DAYS + ' days)'].concat(blocks).join('\n\n');
   }
   function listHtml() {
     const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const lines = ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'];
-    data.list.forEach((e) => lines.push('<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + (e.count > 1 ? ' (x' + e.count + ')' : '')));
-    return lines.join('<br>');
+    const blocks = data.list.map((e) => '<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + (e.count > 1 ? ' - ' + e.count + ' attacks' : ''));
+    return ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'].concat(blocks).join('<br><br>');
   }
   function flash(b, msg) {
     const old = b.textContent;
