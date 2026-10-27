@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.19
+// @version      6.20
 // @description  "Find target" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -287,61 +287,6 @@
     location.href = HOSPITAL_URL;
   }
 
-  // ---- saved targets (kept on this device) -------------------------------
-  let showSaved = false;
-  function loadSaved() {
-    try { return JSON.parse(localStorage.getItem('ht_saved') || '{}') || {}; } catch (e) { return {}; }
-  }
-  function storeSaved(o) { try { localStorage.setItem('ht_saved', JSON.stringify(o)); } catch (e) {} }
-  const savedCount = () => Object.keys(loadSaved()).length;
-
-  function renderSaved() {
-    panel.style.display = 'block';
-    panel.textContent = '';
-    const head = document.createElement('div');
-    const title = document.createElement('b');
-    const list = loadSaved();
-    const ids = Object.keys(list);
-    title.textContent = 'Saved targets: ' + ids.length;
-    head.appendChild(title);
-    head.appendChild(smallBtn('Back', () => { showSaved = false; lastSig = null; tick(); }));
-    head.appendChild(smallBtn('Close', () => { showSaved = false; closePanel(); }));
-    panel.appendChild(head);
-    if (!ids.length) {
-      const none = document.createElement('div');
-      none.style.cssText = 'margin-top:6px;';
-      none.innerHTML = '<i>None saved yet - tap the star on a result</i>';
-      panel.appendChild(none);
-      return;
-    }
-    const table = document.createElement('table');
-    table.style.cssText = 'width:100%;border-collapse:collapse;margin-top:6px;';
-    ids.forEach((id) => {
-      const o = list[id];
-      const tr = document.createElement('tr');
-      tr.style.cssText = 'border-top:1px solid #444;';
-      const td = (html, al) => { const c = document.createElement('td'); c.style.cssText = 'padding:5px 4px;text-align:' + al + ';color:#ddd;'; if (html) c.innerHTML = html; return c; };
-      const tdN = td('', 'left');
-      const a = document.createElement('a');
-      a.href = 'https://www.torn.com/profiles.php?XID=' + id; a.target = '_blank'; a.style.color = '#7cf'; a.textContent = o.name || id;
-      tdN.appendChild(a);
-      const tdL = td('', 'right'); tdL.textContent = o.lvl != null ? o.lvl : '?';
-      const tdA = td('', 'center');
-      const atk = document.createElement('a');
-      atk.href = 'https://www.torn.com/loader.php?sid=attack&user2ID=' + id; atk.target = '_blank'; atk.textContent = 'Attack';
-      atk.style.cssText = 'color:#f99;text-decoration:none;';
-      tdA.appendChild(atk);
-      const tdX = td('', 'center');
-      const x = document.createElement('a');
-      x.textContent = '✕'; x.style.cssText = 'color:#999;cursor:pointer;';
-      x.addEventListener('click', (e) => { e.stopPropagation(); const l = loadSaved(); delete l[id]; storeSaved(l); renderSaved(); });
-      tdX.appendChild(x);
-      tr.appendChild(tdN); tr.appendChild(tdL); tr.appendChild(tdA); tr.appendChild(tdX);
-      table.appendChild(tr);
-    });
-    panel.appendChild(table);
-  }
-
   const boxes = {};
   let countEl = null;
   let dgEl = null;
@@ -398,7 +343,6 @@
     countEl = document.createElement('b');
     head.appendChild(countEl);
     head.appendChild(smallBtn('Rescan', rescan));
-    head.appendChild(smallBtn('Saved (' + savedCount() + ')', () => { showSaved = true; renderSaved(); }));
     head.appendChild(smallBtn('Close', closePanel));
     panel.appendChild(head);
 
@@ -501,30 +445,22 @@
       tdFac.style.cssText = 'padding:5px 4px;text-align:center;color:#999;white-space:nowrap;';
       tdFac.textContent = API_KEY ? '…' : '–';
 
-      const tdSave = document.createElement('td');
-      tdSave.style.cssText = 'padding:5px 4px;text-align:center;';
-      const star = document.createElement('a');
-      star.style.cssText = 'font-size:15px;cursor:pointer;color:#fc6;text-decoration:none;';
-      const paint = () => { star.textContent = loadSaved()[t.id] ? '★' : '☆'; star.title = loadSaved()[t.id] ? 'Remove from saved' : 'Save target'; };
-      paint();
-      star.addEventListener('click', (e) => {
-        e.stopPropagation(); e.preventDefault();
-        const l = loadSaved();
-        if (l[t.id]) delete l[t.id];
-        else {
-          const pr = cache[t.id];
-          l[t.id] = { name: t.name, lvl: (pr && typeof pr === 'object' && typeof pr.level === 'number') ? pr.level : t.lvl };
-        }
-        storeSaved(l); paint();
-        lastSig = null; // rebuild so the Saved (n) count updates
-      });
-      tdSave.appendChild(star);
+      const tdAtk = document.createElement('td');
+      tdAtk.style.cssText = 'padding:5px 4px;text-align:center;white-space:nowrap;';
+      const atk = document.createElement('a');
+      atk.href = 'https://www.torn.com/loader.php?sid=attack&user2ID=' + t.id;
+      atk.target = '_blank';
+      atk.textContent = '⚔ ATTACK';
+      atk.style.cssText =
+        'padding:1px 6px;background:#7a1f1f;color:#fff;border:1px solid #b44;' +
+        'border-radius:3px;font-weight:bold;font-size:10px;text-decoration:none;';
+      tdAtk.appendChild(atk);
 
       tr.appendChild(tdName);
       tr.appendChild(tdLvl);
       tr.appendChild(tdLife);
       tr.appendChild(tdFac);
-      tr.appendChild(tdSave);
+      tr.appendChild(tdAtk);
       tr.lvlEl = tdLvl;
       tr.lifeEl = tdLife;
       tr.facEl = tdFac;
@@ -573,7 +509,6 @@
     found = found.slice(0, MAX_LOOKUPS);
 
     const sig = minLevel() + '-' + limitLevel() + ':' + found.map((t) => t.id).join(',') + (found.length ? '' : (looksLoading() ? '|loading' : '|none'));
-    if (showSaved) return;
     if (sig !== lastSig) {
       lastSig = sig;
       render(found, new Date());
