@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.9
-// @description  Adds a "Retribution List" entry to Torn's navigation menu and a button at the top of the log dropdown (the clipboard icon in the header). Tap either on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
+// @version      3.0
+// @description  Adds a "Retribution List" entry to Torn's navigation menu and a button at the top of the log dropdown (the clipboard icon in the header) and of the log page. Tap any of them to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -307,20 +307,25 @@
   // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
   const ENTRY_ATTR = 'data-retribution-entry';
   let badge = null;
-  // Button at the top of the log dropdown (added further down); it shows the same count as the menu entry.
-  const logBtn = document.createElement('button');
-  logBtn.type = 'button';
-  logBtn.setAttribute('data-retribution-log-btn', '1');
-  logBtn.style.cssText =
-    'display:block;margin:8px auto 4px;padding:6px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;' +
-    'border-radius:12px;font:bold 13px sans-serif;cursor:pointer;';
-  logBtn.textContent = '\u2694 ' + ENTRY_LABEL;
-  logBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openList(); });
+  // Buttons that show the same count as the menu entry: one at the top of the log dropdown and one under the
+  // title of the log page (both added further down). They are separate elements so both can show at once.
+  function makeLogButton(attr, css) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute(attr, '1');
+    b.style.cssText = css + 'padding:6px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;border-radius:12px;font:bold 13px sans-serif;cursor:pointer;';
+    b.textContent = '\u2694 ' + ENTRY_LABEL;
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openList(); });
+    return b;
+  }
+  const logBtn = makeLogButton('data-retribution-log-btn', 'display:block;margin:8px auto 4px;');
+  const logPageBtn = makeLogButton('data-retribution-logpage-btn', 'display:inline-block;margin:6px 0;');
   function updateBadge() {
     const n = data && data.list ? data.list.length : 0;
     const t = n ? ' (' + n + ')' : '';
     if (badge) badge.textContent = t;
     logBtn.textContent = '\u2694 ' + ENTRY_LABEL + t;
+    logPageBtn.textContent = '\u2694 ' + ENTRY_LABEL + t;
   }
   function findMenu() {
     const names = ['Home', 'Items', 'City', 'Gym', 'Crimes'];
@@ -399,6 +404,28 @@
     updateBadge();
   }
   setInterval(ensureLogBtn, 700);
+
+  // ---- log page button ---------------------------------------------------
+  // On Torn's log page (page.php?sid=log) the button sits right under the page title (falls back to the top of
+  // the page content if the title can't be found). Torn redraws the page at times, so keep checking.
+  function onLogPage() {
+    return /[?&]sid=log(&|$)/.test(location.search);
+  }
+  function ensureLogPageBtn() {
+    if (!onLogPage()) { if (logPageBtn.parentNode) logPageBtn.remove(); return; }
+    const title = document.querySelector('.content-title, [class*="content-title"]');
+    if (title && title.parentNode) {
+      if (logPageBtn.previousElementSibling !== title) title.insertAdjacentElement('afterend', logPageBtn);
+    } else {
+      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer');
+      if (host && logPageBtn.parentNode !== host) host.insertBefore(logPageBtn, host.firstChild);
+    }
+    updateBadge();
+  }
+  ensureLogPageBtn();
+  document.addEventListener('DOMContentLoaded', ensureLogPageBtn);
+  window.addEventListener('load', ensureLogPageBtn);
+  setInterval(ensureLogPageBtn, 1500);
 
   // Keep the count in the menu entry fresh without waiting for a tap.
   function backgroundRefresh() {
