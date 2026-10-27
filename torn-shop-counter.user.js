@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Shop Counter
 // @namespace    torn-shop-counter
-// @version      2.6
+// @version      2.7
 // @description  On city shop pages, counts the items you've bought since the daily reset (from your Torn log, via the official API; works with a custom key limited to user > log and the Shops log category) and shows how many you can still buy.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -29,17 +29,18 @@
   // key Torn PDA fills in), because reading the log needs more access than a
   // limited key gives. It asks once and remembers it on this device.
   const KEY_SLOT = 'ts_log_key';
+  // Opens Torn's "add new key" form with the right settings already filled in:
+  // user > log, limited to the Shops log category (id 86), titled "ShopsKey".
+  const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=log&logIds=86&title=ShopsKey';
   let API_KEY = '';
   try { API_KEY = localStorage.getItem(KEY_SLOT) || ''; } catch (e) { API_KEY = ''; }
-  function ensureKey(change) {
-    if (API_KEY && !change) return true;
-    const k = prompt('Torn API key for the shop counter (custom key with user > log, or a Full key):');
-    if (k && k.trim()) {
-      API_KEY = k.trim();
-      try { localStorage.setItem(KEY_SLOT, API_KEY); } catch (e) {}
-      return true;
-    }
-    return !!API_KEY;
+  function ensureKey() { return !!API_KEY; }
+  function saveKey(k) {
+    k = (k || '').trim();
+    if (!k) return false;
+    API_KEY = k;
+    try { localStorage.setItem(KEY_SLOT, API_KEY); } catch (e) {}
+    return true;
   }
 
   // ---- time --------------------------------------------------------------
@@ -154,25 +155,84 @@
   diag.style.cssText =
     'display:none;margin:4px auto;padding:6px 10px;background:#1a1a1a;color:#bbb;max-width:92%;' +
     'border:1px solid #444;border-radius:6px;font:11px sans-serif;line-height:1.5;';
-  banner.addEventListener('click', () => { diag.style.display = diag.style.display === 'none' ? 'block' : 'none'; });
+  banner.addEventListener('click', () => {
+    if (!API_KEY) { showSetup(); return; }
+    diag.style.display = diag.style.display === 'none' ? 'block' : 'none';
+  });
   const diagText = document.createElement('div');
   const keyBtn = document.createElement('button');
   keyBtn.textContent = 'Change API key';
   keyBtn.style.cssText =
     'margin-top:6px;padding:2px 10px;background:#333;color:#ddd;border:1px solid #777;' +
     'border-radius:10px;font:11px sans-serif;';
-  keyBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (ensureKey(true)) { shopTypes = null; typesTried = false; learnedIds = []; refresh(true); }
-  });
+  keyBtn.addEventListener('click', (e) => { e.stopPropagation(); showSetup(); });
   diag.appendChild(diagText);
   diag.appendChild(keyBtn);
+
+  // Key setup panel: a shortcut to Torn's key form (pre-filled) plus a box to paste the key into.
+  const setup = document.createElement('div');
+  setup.style.cssText =
+    'display:none;margin:4px auto;padding:8px 12px;background:#1a1a1a;color:#ddd;max-width:92%;' +
+    'border:1px solid #9d9;border-radius:6px;font:12px sans-serif;line-height:1.6;text-align:center;';
+  const setupMsg = document.createElement('div');
+  setupMsg.textContent = 'The shop counter needs its own API key (it reads your log).';
+  const setupLink = document.createElement('a');
+  setupLink.href = KEY_URL;
+  setupLink.textContent = '1. Create the key on Torn (settings pre-filled)';
+  setupLink.style.cssText =
+    'display:inline-block;margin:6px 0;padding:4px 12px;background:#2d5a2d;color:#fff;' +
+    'border:1px solid #9d9;border-radius:12px;text-decoration:none;font:12px sans-serif;';
+  const setupHint = document.createElement('div');
+  setupHint.style.cssText = 'font-size:11px;color:#aaa;';
+  setupHint.textContent = 'On that page press Create, copy the new key, then come back to a shop page and paste it below.';
+  const keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.placeholder = '2. Paste your key here';
+  keyInput.autocomplete = 'off';
+  keyInput.setAttribute('autocapitalize', 'off');
+  keyInput.setAttribute('autocorrect', 'off');
+  keyInput.spellcheck = false;
+  keyInput.style.cssText =
+    'display:block;margin:6px auto;width:80%;max-width:320px;padding:4px 8px;background:#111;color:#eee;' +
+    'border:1px solid #777;border-radius:6px;font:12px monospace;box-sizing:border-box;';
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save key';
+  saveBtn.style.cssText =
+    'margin:0 4px;padding:3px 14px;background:#333;color:#ddd;border:1px solid #9d9;border-radius:10px;font:12px sans-serif;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText =
+    'margin:0 4px;padding:3px 14px;background:#333;color:#ddd;border:1px solid #777;border-radius:10px;font:12px sans-serif;';
+  setup.appendChild(setupMsg);
+  setup.appendChild(setupLink);
+  setup.appendChild(setupHint);
+  setup.appendChild(keyInput);
+  setup.appendChild(saveBtn);
+  setup.appendChild(cancelBtn);
+  function showSetup() {
+    if (setup.style.display === 'block') return; // already open: don't wipe a half-pasted key
+    keyInput.value = '';
+    cancelBtn.style.display = API_KEY ? 'inline-block' : 'none';
+    setup.style.display = 'block';
+  }
+  function submitKey() {
+    if (!saveKey(keyInput.value)) return;
+    keyInput.value = '';
+    setup.style.display = 'none';
+    shopTypes = null; typesTried = false; learnedIds = [];
+    banner.textContent = '🛒 Checking shop purchases…';
+    refresh(true);
+  }
+  saveBtn.addEventListener('click', (e) => { e.stopPropagation(); submitKey(); });
+  cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); setup.style.display = 'none'; });
+  keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitKey(); });
 
   function ensureUI() {
     const host = document.body || document.documentElement;
     if (!host) return;
     if (banner.parentNode !== host || host.firstChild !== banner) host.insertBefore(banner, host.firstChild);
     if (diag.parentNode !== host) host.insertBefore(diag, banner.nextSibling);
+    if (setup.parentNode !== host) host.insertBefore(setup, diag.nextSibling);
   }
   function errorText(err) {
     if (err.code === 2) return 'API key not accepted - check it';
@@ -233,7 +293,7 @@
   let busy = false, lastRun = 0, last = null;
   async function refresh(force) {
     if (busy || (!force && Date.now() - lastRun < MIN_REFRESH_MS)) return;
-    if (!ensureKey()) { banner.textContent = '🛒 Add an API key to count shop items'; return; }
+    if (!ensureKey()) { banner.textContent = '🛒 Add an API key to count shop items (tap here)'; showSetup(); return; }
     busy = true; lastRun = Date.now();
     try {
       const types = await loadTypes();
