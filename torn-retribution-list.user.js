@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.5
+// @version      2.6
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -172,18 +172,26 @@
   }
 
   // ---- copy to clipboard -------------------------------------------------
-  // Plain text carries "Name [id] - profile link" per line (works pasted anywhere); the rich version
+  // Plain text carries each player's name, count, details and profile link (works pasted anywhere); the rich version
   // makes each name a clickable profile link where the app accepts formatted text.
   const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
+  // Level, faction and last result as shown in the list (the attack count goes on the name line).
+  const detailLine = (e) => 'Lvl ' + e.level + (e.faction ? ' \u00b7 ' + e.faction : '') + ' \u00b7 last: ' + (e.lastResult || '?') + ' ' + ago(e.last);
+  const countText = (e) => e.count + (e.count === 1 ? ' attack' : ' attacks');
+  const hiddenText = () => data.hidden + ' anonymous ' + (data.hidden === 1 ? 'attack' : 'attacks') + ' not shown';
   function listText() {
-    // Blank line after the title and between players; the profile link sits on its own line under each name.
-    const blocks = data.list.map((e) => e.name + ' [' + e.id + ']' + ' - ' + e.count + (e.count === 1 ? ' attack' : ' attacks') + '\n' + profileUrl(e.id));
-    return ['Retribution List (last ' + WINDOW_DAYS + ' days)'].concat(blocks).join('\n\n');
+    // Blank line after the title and between players: name and count, then the details, then the profile link.
+    const blocks = data.list.map((e) => e.name + ' [' + e.id + '] - ' + countText(e) + '\n' + detailLine(e) + '\n' + profileUrl(e.id));
+    const parts = ['Retribution List (last ' + WINDOW_DAYS + ' days)'].concat(blocks);
+    if (data.hidden) parts.push(hiddenText());
+    return parts.join('\n\n');
   }
   function listHtml() {
     const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const blocks = data.list.map((e) => '<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + ' - ' + e.count + (e.count === 1 ? ' attack' : ' attacks'));
-    return ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'].concat(blocks).join('<br><br>');
+    const blocks = data.list.map((e) => '<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a> - ' + countText(e) + '<br>' + esc(detailLine(e)));
+    const parts = ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'].concat(blocks);
+    if (data.hidden) parts.push(hiddenText());
+    return parts.join('<br><br>');
   }
   function flash(b, msg) {
     const old = b.textContent;
@@ -269,8 +277,6 @@
       const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
       row.appendChild(link('https://www.torn.com/profiles.php?XID=' + e.id, e.name + ' [' + e.id + ']', 'color:#7cf;'));
       if (e.count > 1) row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  🔁 ×' + e.count));
-      row.appendChild(link('https://www.torn.com/loader.php?sid=attack&user2ID=' + e.id, '⚔ REVENGE',
-        'margin-left:8px;padding:1px 6px;background:#7a1f1f;color:#fff;border:1px solid #b44;border-radius:3px;font-weight:bold;text-decoration:none;'));
       row.appendChild(el('div', 'color:#bbb;',
         'Lvl ' + e.level + (e.faction ? ' · ' + e.faction : '') + ' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last) +
         (e.count > 1 ? ' · ' + e.count + ' attacks' : '')));
