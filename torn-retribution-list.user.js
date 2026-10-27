@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Torn Attackers
-// @namespace    torn-attackers
-// @version      1.0
+// @name         Torn Retribution List
+// @namespace    torn-retribution-list
+// @version      1.1
 // @description  On your home page, lists the players who attacked you recently (skipping anonymous/stealthed attacks), counts repeat attackers, and gives a one-tap revenge link for each. Uses the official API (user > attacks, Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -25,7 +25,7 @@
   const OWN_SLOT = 'ta_key';
   const SHARED_SLOT = 'ht_api_key';
   // Opens Torn's "add new key" form with user > attacks pre-filled.
-  const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=attacks&title=AttackersKey';
+  const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=attacks&title=RetributionKey';
   function readSlot(slot) { try { return localStorage.getItem(slot) || ''; } catch (e) { return ''; } }
   let ownKey = readSlot(OWN_SLOT);
   const getKey = () => ownKey || readSlot(SHARED_SLOT);
@@ -42,7 +42,7 @@
 
   // ---- API ---------------------------------------------------------------
   async function api(path, params) {
-    const q = new URLSearchParams(Object.assign({}, params, { key: getKey(), comment: 'TornAttackers' }));
+    const q = new URLSearchParams(Object.assign({}, params, { key: getKey(), comment: 'TornRetributionList' }));
     const r = await fetch('https://api.torn.com/v2/' + path + '?' + q.toString());
     const j = await r.json();
     if (j && j.error) {
@@ -151,7 +151,7 @@
     try { localStorage.setItem(OWN_SLOT, ownKey); } catch (e) {}
     keyInput.value = '';
     setup.style.display = 'none';
-    banner.textContent = '⚔ Checking recent attacks…';
+    banner.textContent = '⚔ Checking the retribution list…';
     refresh(true);
   }
   saveBtn.addEventListener('click', (e) => { e.stopPropagation(); submitKey(); });
@@ -253,7 +253,7 @@
     document.addEventListener('DOMContentLoaded', ensureUI);
     window.addEventListener('load', ensureUI);
     setInterval(ensureUI, 2000);
-    banner.textContent = '⚔ Checking recent attacks…';
+    banner.textContent = '⚔ Checking the retribution list…';
     refresh(true);
     setInterval(() => { if (document.visibilityState !== 'hidden') refresh(false); }, POLL_MS);
   }
