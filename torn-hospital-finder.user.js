@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.17
-// @description  Target icon in the Torn header. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
+// @version      6.18
+// @description  "Find target" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -41,25 +41,16 @@
   }
 
   // ---- UI ----------------------------------------------------------------
-  // The click logic lives on `btn`, which is no longer shown on the page.
-  // The visible target icon (inlineBtn) triggers it.
+  // The click logic lives on `btn`, which is never shown on the page.
+  // The visible "Find target" button (inlineBtn) triggers it. It only exists on the
+  // hospital page, in its own row at the very top, so it can't land in other scripts' output.
   const btn = document.createElement('button');
 
-  // Monochrome outline target (same look as the header's other line icons).
-  // Button is placed in the header row; if it can't be seen there it falls
-  // back to its own row at the very top of the page.
-  const ICON_SIZE_PX = 16;  // drawn size of the target
   const inlineBtn = document.createElement('button');
-  inlineBtn.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' + ICON_SIZE_PX + '" height="' + ICON_SIZE_PX + '" viewBox="0 0 24 24" ' +
-    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-    'stroke-linejoin="round" aria-hidden="true" style="pointer-events:none;display:block">' +
-    '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>';
-  inlineBtn.title = 'Find hospital targets';
-  inlineBtn.setAttribute('aria-label', 'Find hospital targets');
+  inlineBtn.textContent = 'Find target';
   inlineBtn.style.cssText =
     'display:block;margin:4px auto;padding:6px 14px;background:#333;color:#ddd;' +
-    'border:1px solid #777;border-radius:14px;font:13px sans-serif;';
+    'border:1px solid #777;border-radius:14px;font:13px sans-serif;cursor:pointer;';
   inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); btn.click(); });
 
   const panel = document.createElement('div');
@@ -69,74 +60,17 @@
     'background:#1a1a1a;color:#ccc;font:11px sans-serif;padding:6px;opacity:.92;' +
     'border:1px solid #444;border-radius:6px;';
 
-  const STYLE_ROW = inlineBtn.style.cssText;
-
-  // Where the icon sits in the header row: just left of the magnifying glass,
-  // one icon-spacing (about 8.6% of the screen width) before it so the whole
-  // row is evenly spaced. Nudge ICON_CENTER_PCT to adjust the gap.
-  const ICON_TOP_PX = 2;       // distance from the top of the page
-  const ICON_CENTER_PCT = 44;   // horizontal centre, as a % of screen width
-
-  // Floats at a fixed spot on the page (not inside Torn's header markup), so it
-  // takes up no header space and can't push the other icons around.
-  const STYLE_HEADER =
-    'position:absolute;top:' + ICON_TOP_PX + 'px;left:calc(' + ICON_CENTER_PCT + '% - 13px);' +
-    'z-index:2147483646;margin:0;padding:0;width:26px;height:30px;' +
-    'display:flex;align-items:center;justify-content:center;' +
-    'background:transparent;border:0;color:#aeaeae;cursor:pointer;';
-
-  // Desktop layout: Torn's header has a toolbar of icons ending with the avatar, with free dark
-  // space to its right, so the icon sits just right of the avatar. On a phone there is no room
-  // there, so the original spot above (between the header icons) is used instead.
-  function headerStyle() {
-    const av = document.querySelector('ul.toolbar li.avatar');
-    if (!av) return STYLE_HEADER;
-    const r = av.getBoundingClientRect();
-    if (!r.width || r.right + 4 + 30 > window.innerWidth - 4) return STYLE_HEADER;
-    let fixed = false;
-    for (let e = av; e && e !== document.documentElement; e = e.parentElement) {
-      if (getComputedStyle(e).position === 'fixed') { fixed = true; break; }
-    }
-    const top = Math.round(r.top + (r.height - 30) / 2) + (fixed ? 0 : window.scrollY);
-    const left = Math.round(r.right + 4) + (fixed ? 0 : window.scrollX);
-    return 'position:' + (fixed ? 'fixed' : 'absolute') + ';top:' + top + 'px;left:' + left + 'px;' +
-      'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;' +
-      'display:flex;align-items:center;justify-content:center;' +
-      'background:transparent;border:0;color:#aeaeae;cursor:pointer;';
-  }
-
-  // Safety net: if the icon can't actually be seen at its spot (covered by
-  // something, or off screen), switch to its own row at the top of the page.
-  let forceRow = false;
-  function pillVisible() {
-    const r = inlineBtn.getBoundingClientRect();
-    if (!r.width || !r.height) return false;
-    const x = r.left + r.width / 2, y = r.top + r.height / 2;
-    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
-    const el = document.elementFromPoint(x, y);
-    return !!el && (el === inlineBtn || inlineBtn.contains(el));
-  }
-
   function ensureUI() {
+    if (!onHospital) return; // nothing is added on any other page
     const host = document.body || document.documentElement;
     if (!host) return;
     if (!host.contains(panel)) host.appendChild(panel);
-
-    if (forceRow) {
-      if (inlineBtn.parentNode !== host || host.firstChild !== inlineBtn) host.insertBefore(inlineBtn, host.firstChild);
-      if (inlineBtn.style.position) { inlineBtn.style.cssText = STYLE_ROW; inlineBtn.dataset.st = ''; }
-      return;
-    }
-    if (inlineBtn.parentNode !== host) host.appendChild(inlineBtn);
-    const st = headerStyle();
-    if (inlineBtn.dataset.st !== st) { inlineBtn.style.cssText = st; inlineBtn.dataset.st = st; }
-    // Only judge visibility at the top of the page (scrolled away isn't a failure).
-    if (document.readyState === 'complete' && window.scrollY < 5 && !pillVisible()) { forceRow = true; ensureUI(); }
+    // Keep the button as the first thing on the page, and put it back if Torn re-renders.
+    if (inlineBtn.parentNode !== host || host.firstChild !== inlineBtn) host.insertBefore(inlineBtn, host.firstChild);
   }
   ensureUI();
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
-  window.addEventListener('resize', ensureUI);
   setInterval(ensureUI, 2000);
 
   // ---- parsing helpers ---------------------------------------------------
