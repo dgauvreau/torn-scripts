@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.6
+// @version      2.7
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -304,7 +304,7 @@
   // ---- menu entry --------------------------------------------------------
   // Torn's menu is a list of rows, each an <a> holding an icon and a label (class names carry a
   // random suffix, so match on the stable prefixes). We copy an ordinary row, e.g. "Home", relabel
-  // it, and append it to the end of the same list, so it picks up the menu's own look on phone and desktop.
+  // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
   const ENTRY_ATTR = 'data-retribution-entry';
   let badge = null;
   function updateBadge() {
@@ -323,7 +323,12 @@
       const area = row.parentElement;            // one menu item
       const container = area.parentElement;      // the whole list
       if (area.querySelectorAll('a').length !== 1) continue; // want a plain entry, not an expandable group
-      return { span, a, area, container };
+      // Where our entry goes: right after the "Items" entry (falls back to the end of the list).
+      const itemsSpan = spans.find((x) => x.textContent.trim() === 'Items');
+      const itemsRow = itemsSpan && itemsSpan.closest('a') && itemsSpan.closest('a').parentElement;
+      const itemsArea = itemsRow && itemsRow.parentElement;
+      const anchor = itemsArea && itemsArea.parentElement === container ? itemsArea : null;
+      return { anchor, span, a, area, container };
     }
     return null;
   }
@@ -350,7 +355,8 @@
     label.appendChild(badge);
     updateBadge();
     a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openList(); }, true);
-    m.container.appendChild(clone);
+    if (m.anchor) m.container.insertBefore(clone, m.anchor.nextSibling); // right after Items
+    else m.container.appendChild(clone);
   }
 
   // The menu is rebuilt by Torn at times (page changes, opening the hamburger), so keep checking.

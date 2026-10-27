@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.24
+// @version      6.25
 // @description  Target icon in the header linking to your targets list, plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -66,7 +66,7 @@
   // ---- navigation menu entry (every page) ------------------------------------
   // Torn's menu is a list of rows, each an <a> holding an icon and a label (class names carry a
   // random suffix, so match on the stable prefixes). We copy an ordinary row, e.g. "Home", relabel
-  // it, and append it to the end of the same list, so it picks up the menu's own look on phone and desktop.
+  // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
   const ENTRY_ATTR = 'data-find-target-entry';
   const ENTRY_LABEL = 'Find Target';
   function findMenu() {
@@ -80,7 +80,12 @@
       const area = row.parentElement;            // one menu item
       const container = area.parentElement;      // the whole list
       if (area.querySelectorAll('a').length !== 1) continue; // want a plain entry, not an expandable group
-      return { area, container };
+      // Where our entry goes: right after the "Items" entry (falls back to the end of the list).
+      const itemsSpan = spans.find((x) => x.textContent.trim() === 'Items');
+      const itemsRow = itemsSpan && itemsSpan.closest('a') && itemsSpan.closest('a').parentElement;
+      const itemsArea = itemsRow && itemsRow.parentElement;
+      const anchor = itemsArea && itemsArea.parentElement === container ? itemsArea : null;
+      return { anchor, area, container };
     }
     return null;
   }
@@ -109,7 +114,8 @@
     }
     clone.querySelector('[class*="linkName"]').textContent = ENTRY_LABEL;
     a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); btn.click(); }, true);
-    m.container.appendChild(clone);
+    if (m.anchor) m.container.insertBefore(clone, m.anchor.nextSibling); // right after Items
+    else m.container.appendChild(clone);
   }
   // The menu is rebuilt by Torn at times (page changes, opening the hamburger), so keep checking.
   ensureEntry();
