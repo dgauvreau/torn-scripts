@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Targets Helper
 // @namespace    torn-targets-helper
-// @version      1.0
+// @version      1.1
 // @description  Target icon in the header that opens your targets list, plus a live chain countdown shown on the targets list page (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -88,7 +88,8 @@
   // chain time in a tap-tooltip, so the time comes from the API (user bars, chain part): one lookup every
   // CHAIN_POLL_MS, with the countdown ticking locally in between.
   const CHAIN_WARN_SECONDS = 60; // the timer turns red below this
-  const CHAIN_POLL_MS = 10000;
+  const CHAIN_POLL_MS = 6000;    // how often the API is asked
+  const CHAIN_TOUCH_MS = 4000;   // a tap refreshes right away if the last lookup is older than this
   let chainDeadline = null;      // when the chain runs out (ms since 1970); null = no running chain
   let chainValue = '';           // e.g. "159/250"
   let chainState = 'loading';    // loading | ok | error
@@ -107,7 +108,8 @@
     chainFetching = true;
     chainLastFetch = Date.now();
     try {
-      const r = await fetch('https://api.torn.com/user/?selections=bars&key=' + API_KEY);
+      // The API serves identical requests from a 30 second cache, so a changing `timestamp` makes each lookup fresh.
+      const r = await fetch('https://api.torn.com/user/?selections=bars&key=' + API_KEY + '&timestamp=' + Math.floor(Date.now() / 1000));
       const j = await r.json();
       const c = j && !j.error && (j.chain || (j.bars && j.bars.chain));
       if (!c) {
@@ -116,7 +118,7 @@
         let left = +c.timeout || 0;
         if (!left && c.end) left = (+c.end) - Date.now() / 1000;
         chainDeadline = left > 0 ? Date.now() + left * 1000 : null;
-        chainValue = chainDeadline && c.max ? (+c.current || 0) + '/' + c.max : '';
+        chainValue = chainDeadline && +c.current > 0 ? c.current + (+c.max > 0 ? '/' + c.max : '') : '';
         chainState = 'ok';
       }
     } catch (e) {
@@ -148,5 +150,8 @@
   document.addEventListener('DOMContentLoaded', ensureChain);
   window.addEventListener('load', ensureChain);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { chainLastFetch = 0; ensureChain(); } });
+  // Looking at the page again is when an out-of-date timer matters (e.g. someone just extended the chain), so a
+  // tap or scroll asks for fresh data on the next tick.
+  document.addEventListener('touchstart', () => { if (Date.now() - chainLastFetch > CHAIN_TOUCH_MS) chainLastFetch = 0; }, { passive: true });
   setInterval(ensureChain, 1000);
 })();
