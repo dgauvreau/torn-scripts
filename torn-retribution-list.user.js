@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.3
+// @version      2.4
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -179,12 +179,12 @@
   const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
   function listText() {
     // Blank line after the title and between players; the profile link sits on its own line under each name.
-    const blocks = data.list.map((e) => e.name + ' [' + e.id + ']' + (e.count > 1 ? ' - ' + e.count + ' attacks' : '') + '\n' + profileUrl(e.id));
+    const blocks = data.list.map((e) => e.name + ' [' + e.id + ']' + ' - ' + e.count + (e.count === 1 ? ' attack' : ' attacks') + '\n' + profileUrl(e.id));
     return ['Retribution List (last ' + WINDOW_DAYS + ' days)'].concat(blocks).join('\n\n');
   }
   function listHtml() {
     const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const blocks = data.list.map((e) => '<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + (e.count > 1 ? ' - ' + e.count + ' attacks' : ''));
+    const blocks = data.list.map((e) => '<a href="' + profileUrl(e.id) + '">' + esc(e.name) + ' [' + e.id + ']</a>' + ' - ' + e.count + (e.count === 1 ? ' attack' : ' attacks'));
     return ['<b>Retribution List (last ' + WINDOW_DAYS + ' days)</b>'].concat(blocks).join('<br><br>');
   }
   function flash(b, msg) {
