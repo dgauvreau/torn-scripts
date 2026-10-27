@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Hospital Alert
 // @namespace    torn-hospital-alert
-// @version      1.1
-// @description  Warns you when your hospital release is close, so you can heal out (medical items) before the timer runs out and you're released into easy-target territory. Amber warning first, then a red flashing bar with vibration. Uses the official API (user > profile, any key works).
+// @version      1.2
+// @description  Warns you when your hospital release is close, so you can heal out (medical items) before the timer runs out and you're released into easy-target territory. Tells you when one First Aid Kit (40 min) or one Small First Aid Kit (20 min) would get you out, then an amber warning, then a red flashing bar with vibration. Uses the official API (user > profile, any key works).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -15,9 +15,13 @@
   // ---- settings ----------------------------------------------------------
   const WARN_SEC = 600;            // amber warning when this many seconds (or fewer) are left
   const URGENT_SEC = 120;          // red flashing bar when this many seconds (or fewer) are left
+  // First aid kit sizes (base values; medical perks only make them stronger): a kit gets you out of
+  // hospital outright once the time left is at or under what it removes.
+  const FAK_SEC = 2400;            // First Aid Kit removes 40 minutes
+  const SFAK_SEC = 1200;           // Small First Aid Kit removes 20 minutes
   const SLOW_POLL_MS = 60000;      // how often to check your status normally
   const FAST_POLL_MS = 15000;      // how often once release is within FAST_WITHIN_SEC
-  const FAST_WITHIN_SEC = 1200;
+  const FAST_WITHIN_SEC = FAK_SEC + 300;
   const ITEMS_URL = 'https://www.torn.com/item.php';   // where to go to use medical items
 
   // ---- API key -----------------------------------------------------------
@@ -38,8 +42,15 @@
   let lastFetch = 0;      // ms
   let busy = false;
   let problem = null;     // { code, message } from the last failed check
-  const dismissed = { warn: false, urgent: false };
-  const notified = { warn: false, urgent: false };
+  // Biggest first. A level applies when the time left is at or under `sec`; the smallest matching one wins.
+  const LEVELS = [
+    { key: 'fak',    sec: FAK_SEC,    bg: '#1f5f8b', icon: '\ud83e\ude79', tail: ' \u2013 one First Aid Kit (40 min) gets you out' },
+    { key: 'sfak',   sec: SFAK_SEC,   bg: '#1f6f5c', icon: '\ud83e\ude79', tail: ' \u2013 one Small First Aid Kit (20 min) gets you out' },
+    { key: 'warn',   sec: WARN_SEC,   bg: '#c27a00', icon: '\ud83c\udfe5', tail: ' \u2013 heal out before you\'re released' },
+    { key: 'urgent', sec: URGENT_SEC, bg: '#b3261e', icon: '\ud83d\udea8', tail: ' \u2013 heal out NOW', flash: true },
+  ];
+  const dismissed = {};   // per level key
+  const notified = {};    // per level key
 
   async function checkStatus() {
     if (busy) return;
@@ -133,7 +144,7 @@
   function alertUser(lvl, text) {
     if (notified[lvl]) return;
     notified[lvl] = true;
-    try { if (navigator.vibrate) navigator.vibrate(lvl === 'urgent' ? [400, 150, 400, 150, 400] : [300]); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(lvl === 'urgent' ? [400, 150, 400, 150, 400] : (lvl === 'warn' ? [300, 100, 300] : [200])); } catch (e) {}
     try { if (window.Notification && Notification.permission === 'granted') new Notification('Torn hospital', { body: text }); } catch (e) {}
   }
 
@@ -151,22 +162,21 @@
     }
 
     const left = until ? until - nowSec() : 0;
-    level = '';
-    if (left > 0 && left <= URGENT_SEC) level = 'urgent';
-    else if (left > 0 && left <= WARN_SEC) level = 'warn';
+    let cur = null;
+    if (left > 0) LEVELS.forEach((L) => { if (left <= L.sec) cur = L; }); // smallest matching level wins
+    level = cur ? cur.key : '';
 
-    // Left the window (healed, or hospital time grew): re-arm the alerts.
-    if (left <= 0 || left > WARN_SEC + 60) { notified.warn = false; notified.urgent = false; dismissed.warn = false; dismissed.urgent = false; }
-    if (left > URGENT_SEC + 30) { notified.urgent = false; dismissed.urgent = false; }
+    // Left a level's window (healed, or hospital time grew): re-arm that level's alert.
+    LEVELS.forEach((L) => { if (left <= 0 || left > L.sec + 30) { notified[L.key] = false; dismissed[L.key] = false; } });
 
-    if (!level || dismissed[level]) { bar.style.display = 'none'; bar.style.animation = ''; return; }
+    if (!cur || dismissed[cur.key]) { bar.style.display = 'none'; return; }
 
-    const text = (level === 'urgent' ? '🚨 Hospital release in ' : '🏥 Hospital release in ') + mmss(left) + (level === 'urgent' ? ' – heal out NOW' : ' – heal out before you\'re released');
+    const text = cur.icon + ' Hospital release in ' + mmss(left) + cur.tail;
     msg.textContent = text;
-    bar.style.background = level === 'urgent' ? '#b3261e' : '#c27a00';
+    bar.style.background = cur.bg;
     bar.style.display = 'block';
-    bar.style.opacity = level === 'urgent' && (nowSec() % 2) ? '0.75' : '1';
-    alertUser(level, text);
+    bar.style.opacity = cur.flash && (nowSec() % 2) ? '0.75' : '1';
+    alertUser(cur.key, text);
   }
 
   // ---- loop --------------------------------------------------------------
