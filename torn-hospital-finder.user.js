@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.21
-// @description  "Find target" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
+// @version      6.22
+// @description  Target icon in the header linking to your targets list, plus a "Find Target Patients" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -72,6 +72,55 @@
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
   setInterval(ensureUI, 2000);
+
+  // ---- targets-list shortcut (global header, every page) -------------------
+  // A small target icon in the header row that opens your Torn targets list.
+  const TARGETS_URL = 'https://www.torn.com/page.php?sid=list&type=targets';
+  const linkIcon = document.createElement('a');
+  linkIcon.href = TARGETS_URL;
+  linkIcon.title = 'My targets';
+  linkIcon.setAttribute('aria-label', 'My targets');
+  linkIcon.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ' +
+    'style="pointer-events:none;display:block"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/>' +
+    '<circle cx="12" cy="12" r="1"/></svg>';
+
+  // Phone layout: sits in the header row just left of the magnifying glass.
+  const LINK_TOP_PX = 2;        // distance from the top of the page
+  const LINK_CENTER_PCT = 44;   // horizontal centre, as a % of screen width
+  const LINK_BASE =
+    'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;display:flex;align-items:center;' +
+    'justify-content:center;background:transparent;border:0;color:#aeaeae;cursor:pointer;text-decoration:none;';
+  const LINK_PHONE = 'position:absolute;top:' + LINK_TOP_PX + 'px;left:calc(' + LINK_CENTER_PCT + '% - 15px);' + LINK_BASE;
+
+  // Desktop layout: just right of the avatar at the end of the header toolbar.
+  function linkStyle() {
+    const av = document.querySelector('ul.toolbar li.avatar');
+    if (!av) return LINK_PHONE;
+    const r = av.getBoundingClientRect();
+    if (!r.width || r.right + 4 + 30 > window.innerWidth - 4) return LINK_PHONE;
+    let fixed = false;
+    for (let e = av; e && e !== document.documentElement; e = e.parentElement) {
+      if (getComputedStyle(e).position === 'fixed') { fixed = true; break; }
+    }
+    const top = Math.round(r.top + (r.height - 30) / 2) + (fixed ? 0 : window.scrollY);
+    const left = Math.round(r.right + 4) + (fixed ? 0 : window.scrollX);
+    return 'position:' + (fixed ? 'fixed' : 'absolute') + ';top:' + top + 'px;left:' + left + 'px;' + LINK_BASE;
+  }
+
+  function ensureLink() {
+    const host = document.body || document.documentElement;
+    if (!host) return;
+    if (linkIcon.parentNode !== host) host.appendChild(linkIcon);
+    const st = linkStyle();
+    if (linkIcon.dataset.st !== st) { linkIcon.style.cssText = st; linkIcon.dataset.st = st; }
+  }
+  ensureLink();
+  document.addEventListener('DOMContentLoaded', ensureLink);
+  window.addEventListener('load', ensureLink);
+  window.addEventListener('resize', ensureLink);
+  setInterval(ensureLink, 2000);
 
   // ---- parsing helpers ---------------------------------------------------
   function parseSeconds(text) {
