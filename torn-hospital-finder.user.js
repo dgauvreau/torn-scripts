@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.27
+// @version      6.28
 // @description  Target icon in the header linking to your targets list (with the live chain countdown shown on that page), plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -207,44 +207,70 @@
   setInterval(ensureLink, 2000);
 
   // ---- chain timer on the targets page -------------------------------------
-  // Copies the countdown from Torn's own sidebar chain bar onto the targets list page, so you can see
-  // how long the chain has left while picking targets. Reads the page only: no API calls.
+  // Shows how long your chain has left while you pick targets. On the phone layout Torn only shows the
+  // chain time in a tap-tooltip, so the time comes from the API (user bars, chain part): one lookup every
+  // CHAIN_POLL_MS, with the countdown ticking locally in between.
   const CHAIN_WARN_SECONDS = 60; // the timer turns red below this
+  const CHAIN_POLL_MS = 10000;
+  let chainDeadline = null;      // when the chain runs out (ms since 1970); null = no running chain
+  let chainValue = '';           // e.g. "159/250"
+  let chainState = 'loading';    // loading | ok | error
+  let chainLastFetch = 0, chainFetching = false;
   const chainBox = document.createElement('div');
   chainBox.setAttribute('data-chain-timer', '1');
   chainBox.style.cssText =
-    'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:2147483646;padding:6px 12px;' +
+    'position:fixed;bottom:14px;left:10px;z-index:2147483646;padding:6px 12px;' +
     'border-radius:14px;background:#1a1a1a;border:1px solid #555;font:bold 14px sans-serif;color:#fff;' +
     'white-space:nowrap;pointer-events:none;';
   function onTargetsPage() {
     return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
   }
-  // { secs, value } from the sidebar chain bar, or null when there is no running chain.
-  function readChain() {
-    const bar = document.querySelector('[class*="chain-bar"]');
-    if (!bar) return null;
-    const tEl = bar.querySelector('[class*="bar-timeleft"]');
-    const tm = ((tEl ? tEl.textContent : bar.textContent) || '').match(/\d+:\d+(?::\d+)?/);
-    const secs = tm ? parseSeconds(tm[0]) : null;
-    if (secs === null || secs <= 0) return null;
-    const vEl = bar.querySelector('[class*="bar-value"]');
-    const vm = ((vEl ? vEl.textContent : bar.textContent) || '').match(/\d+\s*\/\s*\d+/);
-    return { secs, value: vm ? vm[0].replace(/\s+/g, '') : '' };
+  async function fetchChain() {
+    if (chainFetching || !API_KEY) return;
+    chainFetching = true;
+    chainLastFetch = Date.now();
+    try {
+      const r = await fetch('https://api.torn.com/user/?selections=bars&key=' + API_KEY);
+      const j = await r.json();
+      const c = j && !j.error && (j.chain || (j.bars && j.bars.chain));
+      if (!c) {
+        chainState = 'error';
+      } else {
+        let left = +c.timeout || 0;
+        if (!left && c.end) left = (+c.end) - Date.now() / 1000;
+        chainDeadline = left > 0 ? Date.now() + left * 1000 : null;
+        chainValue = chainDeadline && c.max ? (+c.current || 0) + '/' + c.max : '';
+        chainState = 'ok';
+      }
+    } catch (e) {
+      chainState = 'error';
+    }
+    chainFetching = false;
   }
   function ensureChain() {
     if (!onTargetsPage()) { if (chainBox.parentNode) chainBox.remove(); return; }
     const host = document.body || document.documentElement;
     if (!host) return;
     if (chainBox.parentNode !== host) host.appendChild(chainBox);
-    const c = readChain();
-    if (!c) { chainBox.textContent = 'Chain: none'; chainBox.style.color = '#999'; return; }
-    const p2 = (n) => String(n).padStart(2, '0');
-    chainBox.textContent = 'Chain ' + (c.value ? c.value + ' · ' : '') + Math.floor(c.secs / 60) + ':' + p2(c.secs % 60);
-    chainBox.style.color = c.secs < CHAIN_WARN_SECONDS ? '#ff5b5b' : '#fff';
+    if (API_KEY && !chainFetching && Date.now() - chainLastFetch >= CHAIN_POLL_MS) fetchChain();
+    const left = chainDeadline === null ? 0 : Math.ceil((chainDeadline - Date.now()) / 1000);
+    let text, color = '#fff';
+    if (!API_KEY) { text = 'Chain: no API key'; color = '#fc6'; }
+    else if (left > 0) {
+      const p2 = (n) => String(n).padStart(2, '0');
+      text = 'Chain ' + (chainValue ? chainValue + ' · ' : '') + Math.floor(left / 60) + ':' + p2(left % 60);
+      if (left < CHAIN_WARN_SECONDS) color = '#ff5b5b';
+    }
+    else if (chainState === 'loading') { text = 'Chain: …'; color = '#999'; }
+    else if (chainState === 'error') { text = 'Chain: API error'; color = '#fc6'; }
+    else { text = 'Chain: none'; color = '#999'; }
+    if (chainBox.textContent !== text) chainBox.textContent = text;
+    chainBox.style.color = color;
   }
   ensureChain();
   document.addEventListener('DOMContentLoaded', ensureChain);
   window.addEventListener('load', ensureChain);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { chainLastFetch = 0; ensureChain(); } });
   setInterval(ensureChain, 1000);
 
   // ---- parsing helpers ---------------------------------------------------
