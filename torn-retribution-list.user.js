@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      2.2
+// @version      2.3
 // @description  Adds a "Retribution List" entry to Torn's navigation menu. Tap it on any page to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -166,8 +166,9 @@
     a.href = href; a.target = '_blank';
     return a;
   }
-  function btn(text, onclick) {
-    const b = el('button', 'margin:0 4px;padding:3px 14px;background:#333;color:#ddd;border:1px solid #9d9;border-radius:10px;font:12px sans-serif;', text);
+  function btn(text, onclick, title) {
+    const b = el('button', 'margin:0 0 0 6px;padding:3px 10px;background:#333;color:#ddd;border:1px solid #9d9;border-radius:10px;font:12px sans-serif;', text);
+    if (title) { b.title = title; b.setAttribute('aria-label', title); }
     b.addEventListener('click', (e) => { e.stopPropagation(); onclick(b); });
     return b;
   }
@@ -209,14 +210,14 @@
           'text/plain': new Blob([text], { type: 'text/plain' }),
           'text/html': new Blob([html], { type: 'text/html' }),
         })]);
-        flash(b, 'Copied ✓');
+        flash(b, '✓');
         return;
       }
     } catch (e) { /* try the next way */ }
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
-        flash(b, 'Copied ✓');
+        flash(b, '✓');
         return;
       }
     } catch (e) { /* try the next way */ }
@@ -229,7 +230,7 @@
       ta.select();
       const ok = document.execCommand('copy');
       ta.remove();
-      if (ok) { flash(b, 'Copied ✓'); return; }
+      if (ok) { flash(b, '✓'); return; }
     } catch (e) { /* fall through */ }
     showManualCopy(text);
   }
@@ -280,10 +281,10 @@
     if (data.list.length > MAX_LISTED) sheet.appendChild(el('div', 'margin-top:6px;color:#888;', '…and ' + (data.list.length - MAX_LISTED) + ' more'));
 
     const foot = el('div', 'margin-top:10px;padding-top:6px;border-top:1px solid #444;font-size:11px;color:#888;display:flex;justify-content:space-between;align-items:center;');
-    foot.appendChild(el('span', '', 'Updated ' + ago(data.ts) + (data.hidden ? ' · ' + data.hidden + ' anonymous not shown' : '')));
-    const acts = el('span', '');
-    if (data.list.length) acts.appendChild(btn('Copy list', copyList));
-    acts.appendChild(btn(busy ? 'Refreshing…' : 'Refresh', () => refresh(true)));
+    foot.appendChild(el('span', 'flex:1;min-width:0;', 'Updated ' + ago(data.ts) + (data.hidden ? ' · ' + data.hidden + ' anonymous not shown' : '')));
+    const acts = el('span', 'flex:none;white-space:nowrap;margin-left:8px;');
+    if (data.list.length) acts.appendChild(btn('📋', copyList, 'Copy'));
+    acts.appendChild(btn(busy ? '…' : '🔄', () => refresh(true), 'Refresh'));
     foot.appendChild(acts);
     sheet.appendChild(foot);
   }
