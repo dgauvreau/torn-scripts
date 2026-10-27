@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      3.0
-// @description  Adds a "Retribution List" entry to Torn's navigation menu and a button at the top of the log dropdown (the clipboard icon in the header) and of the log page. Tap any of them to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
+// @version      3.1
+// @description  Adds a "Retribution List" button at the top of the log dropdown (the clipboard icon in the header) and under the title of the log page. Tap it to see who attacked you recently (anonymous attacks skipped), with repeat-attacker counts and a one-tap revenge link. Uses the official API (user > attacks, a Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -301,13 +301,8 @@
   }
   function closeList() { overlay.style.display = 'none'; }
 
-  // ---- menu entry --------------------------------------------------------
-  // Torn's menu is a list of rows, each an <a> holding an icon and a label (class names carry a
-  // random suffix, so match on the stable prefixes). We copy an ordinary row, e.g. "Home", relabel
-  // it, and put it right after the "Items" entry of the same list, so it picks up the menu's own look on phone and desktop.
-  const ENTRY_ATTR = 'data-retribution-entry';
-  let badge = null;
-  // Buttons that show the same count as the menu entry: one at the top of the log dropdown and one under the
+  // ---- log buttons -------------------------------------------------------
+  // Buttons that show the attacker count: one at the top of the log dropdown and one under the
   // title of the log page (both added further down). They are separate elements so both can show at once.
   function makeLogButton(attr, css) {
     const b = document.createElement('button');
@@ -323,63 +318,9 @@
   function updateBadge() {
     const n = data && data.list ? data.list.length : 0;
     const t = n ? ' (' + n + ')' : '';
-    if (badge) badge.textContent = t;
     logBtn.textContent = '\u2694 ' + ENTRY_LABEL + t;
     logPageBtn.textContent = '\u2694 ' + ENTRY_LABEL + t;
   }
-  function findMenu() {
-    const names = ['Home', 'Items', 'City', 'Gym', 'Crimes'];
-    const spans = Array.prototype.slice.call(document.querySelectorAll('[class*="linkName"]'));
-    for (let i = 0; i < names.length; i++) {
-      const span = spans.find((s) => s.textContent.trim() === names[i]);
-      const a = span && span.closest('a');
-      if (!a || !a.parentElement || !a.parentElement.parentElement || !a.parentElement.parentElement.parentElement) continue;
-      const row = a.parentElement;               // the row holding the <a>
-      const area = row.parentElement;            // one menu item
-      const container = area.parentElement;      // the whole list
-      if (area.querySelectorAll('a').length !== 1) continue; // want a plain entry, not an expandable group
-      // Where our entry goes: right after the "Items" entry (falls back to the end of the list).
-      const itemsSpan = spans.find((x) => x.textContent.trim() === 'Items');
-      const itemsRow = itemsSpan && itemsSpan.closest('a') && itemsSpan.closest('a').parentElement;
-      const itemsArea = itemsRow && itemsRow.parentElement;
-      const anchor = itemsArea && itemsArea.parentElement === container ? itemsArea : null;
-      return { anchor, span, a, area, container };
-    }
-    return null;
-  }
-  function ensureEntry() {
-    const m = findMenu();
-    if (!m) return;
-    if (m.container.querySelector('[' + ENTRY_ATTR + ']')) return;
-    const clone = m.area.cloneNode(true);
-    clone.setAttribute(ENTRY_ATTR, '1');
-    clone.className = String(clone.className).replace(/\S*active\S*/g, '').trim(); // never look like the current page
-    Array.prototype.forEach.call(clone.querySelectorAll('*'), (n) => {
-      if (typeof n.className === 'string' && /active/i.test(n.className)) n.className = n.className.replace(/\S*active\S*/gi, '').trim();
-      n.removeAttribute('id');
-    });
-    const a = clone.querySelector('a');
-    a.setAttribute('href', '#');
-    a.removeAttribute('target');
-    a.removeAttribute('aria-current');
-    const iconBox = clone.querySelector('[class*="defaultIcon"]') || clone.querySelector('[class*="svgIconWrap"]');
-    if (iconBox) { iconBox.textContent = ''; iconBox.appendChild(el('span', 'font-size:13px;line-height:14px;display:inline-block;', '⚔')); }
-    const label = clone.querySelector('[class*="linkName"]');
-    label.textContent = ENTRY_LABEL;
-    badge = el('span', '', '');
-    label.appendChild(badge);
-    updateBadge();
-    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openList(); }, true);
-    if (m.anchor) m.container.insertBefore(clone, m.anchor.nextSibling); // right after Items
-    else m.container.appendChild(clone);
-  }
-
-  // The menu is rebuilt by Torn at times (page changes, opening the hamburger), so keep checking.
-  ensureEntry();
-  document.addEventListener('DOMContentLoaded', ensureEntry);
-  window.addEventListener('load', ensureEntry);
-  setInterval(ensureEntry, 1500);
-
   // ---- log dropdown button -----------------------------------------------
   // The clipboard icon in Torn's header opens a dropdown of your latest log entries that ends in a "View Log"
   // link. The button goes at the top of that dropdown. Class names there are random, so the panel is found by
@@ -427,7 +368,7 @@
   window.addEventListener('load', ensureLogPageBtn);
   setInterval(ensureLogPageBtn, 1500);
 
-  // Keep the count in the menu entry fresh without waiting for a tap.
+  // Keep the count on the buttons fresh without waiting for a tap.
   function backgroundRefresh() {
     if (!getKey()) return;
     if (data && Date.now() / 1000 - data.ts < BG_REFRESH_MS / 1000) return;
