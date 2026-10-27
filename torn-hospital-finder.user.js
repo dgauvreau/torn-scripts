@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.22
+// @version      6.23
 // @description  Target icon in the header linking to your targets list, plus a "Find Target Patients" button at the top of the hospital page. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -92,14 +92,29 @@
   const LINK_BASE =
     'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;display:flex;align-items:center;' +
     'justify-content:center;background:transparent;border:0;color:#aeaeae;cursor:pointer;text-decoration:none;';
-  const LINK_PHONE = 'position:absolute;top:' + LINK_TOP_PX + 'px;left:calc(' + LINK_CENTER_PCT + '% - 15px);' + LINK_BASE;
+  // The header can be pushed down by banners other scripts add at the top of the page (shop counter,
+  // retribution list), so measure where it actually is instead of assuming it starts at the top.
+  function phoneStyle() {
+    const h = document.querySelector('#header-root') || document.querySelector('.header-wrapper-top');
+    let top = LINK_TOP_PX, pos = 'absolute';
+    if (h) {
+      const r = h.getBoundingClientRect();
+      let fixed = false;
+      for (let e = h; e && e !== document.documentElement; e = e.parentElement) {
+        if (getComputedStyle(e).position === 'fixed') { fixed = true; break; }
+      }
+      pos = fixed ? 'fixed' : 'absolute';
+      top = Math.round(r.top + (fixed ? 0 : window.scrollY)) + LINK_TOP_PX;
+    }
+    return 'position:' + pos + ';top:' + top + 'px;left:calc(' + LINK_CENTER_PCT + '% - 15px);' + LINK_BASE;
+  }
 
   // Desktop layout: just right of the avatar at the end of the header toolbar.
   function linkStyle() {
     const av = document.querySelector('ul.toolbar li.avatar');
-    if (!av) return LINK_PHONE;
+    if (!av) return phoneStyle();
     const r = av.getBoundingClientRect();
-    if (!r.width || r.right + 4 + 30 > window.innerWidth - 4) return LINK_PHONE;
+    if (!r.width || r.right + 4 + 30 > window.innerWidth - 4) return phoneStyle();
     let fixed = false;
     for (let e = av; e && e !== document.documentElement; e = e.parentElement) {
       if (getComputedStyle(e).position === 'fixed') { fixed = true; break; }
