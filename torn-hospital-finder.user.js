@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.25
+// @version      6.26
 // @description  Target icon in the header linking to your targets list, plus a "Find Target" entry in the navigation menu. Scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -47,16 +47,35 @@
 
   const panel = document.createElement('div');
   panel.style.cssText =
-    'position:fixed;top:98px;right:6px;z-index:2147483647;' +
-    'width:70vw;max-width:260px;display:none;max-height:45vh;overflow:auto;' +
-    'background:#1a1a1a;color:#ccc;font:11px sans-serif;padding:6px;opacity:.92;' +
+    'display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;' +
+    'background:#1a1a1a;color:#ccc;font:12px sans-serif;padding:8px;' +
     'border:1px solid #444;border-radius:6px;';
 
+  let scanning = false;
+  function showIdle() {
+    panel.textContent = '';
+    panel.style.display = 'block';
+    const head = document.createElement('div');
+    const t = document.createElement('b');
+    t.textContent = '\ud83c\udfaf Find Target';
+    head.appendChild(t);
+    head.appendChild(smallBtn('Scan', () => btn.click()));
+    panel.appendChild(head);
+  }
   function ensureUI() {
     if (!onHospital) return; // the results panel only exists on the hospital page
-    const host = document.body || document.documentElement;
-    if (!host) return;
-    if (!host.contains(panel)) host.appendChild(panel);
+    // The panel sits inline, in the page itself, right above the hospital list.
+    const list = document.querySelector('.user-info-list-wrap');
+    let parent = null, before = null;
+    if (list && list.parentNode) { parent = list.parentNode; before = list; }
+    else {
+      const title = document.querySelector('.content-title, [class*="content-title"]');
+      if (title && title.parentNode) { parent = title.parentNode; before = title.nextSibling; }
+      else { parent = document.querySelector('#mainContainer, .content-wrapper'); }
+    }
+    if (!parent) return;
+    if (panel.parentNode !== parent || (before && panel.nextSibling !== before)) parent.insertBefore(panel, before);
+    if (!scanning && panel.style.display === 'none') showIdle();
   }
   ensureUI();
   document.addEventListener('DOMContentLoaded', ensureUI);
@@ -258,7 +277,6 @@
 
   // ---- scan (one-shot: results stay put until you rescan or close) --------
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-  let scanning = false;
   let candidateCount = 0;    // matches on the page before the shortlist was cut
   let shortestOnPage = null; // smallest time seen on the page being scanned
   let longestOnPage = null;  // largest time seen on the page being scanned
@@ -391,8 +409,10 @@
   }
 
   function closePanel() {
-    panel.style.display = 'none';
+    scanning = false;
+    clearInterval(liveTimer); liveTimer = null;
     getRows().forEach((r) => { r.style.outline = ''; });
+    showIdle();
   }
 
   function rescan() {
@@ -457,7 +477,7 @@
     countEl = document.createElement('b');
     head.appendChild(countEl);
     head.appendChild(smallBtn('Rescan', rescan));
-    head.appendChild(smallBtn('Close', closePanel));
+    head.appendChild(smallBtn('Stop', closePanel));
     panel.appendChild(head);
 
     if (USE_LEVEL_LIMIT && myLevel !== null) {
@@ -596,7 +616,7 @@
   const kept = new Map(); // id -> target
 
   function tick() {
-    if (panel.style.display === 'none') { clearInterval(liveTimer); liveTimer = null; return; }
+    if (!scanning) { clearInterval(liveTimer); liveTimer = null; return; }
 
     // If the pager still isn't on the last page after a few seconds, click the last-page link again.
     const pg = pageInfo();
@@ -638,6 +658,7 @@
   }
 
   function startLive() {
+    scanning = true;
     ensureKey();
     panel.style.display = 'block';
     panel.textContent = 'Scanning…';
@@ -682,6 +703,7 @@
   // Click the last page (the list is sorted longest-first, so the end holds the shortest
   // times) and start the live scan straight away - no waiting for the page to settle.
   async function jumpAndScan() {
+    scanning = true;
     panel.style.display = 'block';
     panel.textContent = 'Opening the last page of the hospital list…';
     await waitFor(() => getRows().length > 0, 10000);
