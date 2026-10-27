@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Retribution List
 // @namespace    torn-retribution-list
-// @version      1.1
+// @version      1.2
 // @description  On your home page, lists the players who attacked you recently (skipping anonymous/stealthed attacks), counts repeat attackers, and gives a one-tap revenge link for each. Uses the official API (user > attacks, Limited key is enough).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -20,15 +20,19 @@
   const POLL_MS = 60000;                          // background refresh while the page is open
 
   // ---- API key -----------------------------------------------------------
-  // First choice: the key the Find Target loader already stored from Torn PDA ('ht_api_key').
+  // Uses a key saved here, else the Torn PDA key (placeholder below), else the one the Find Target loader stored ('ht_api_key').
   // If that key can't read attacks, the panel offers a shortcut to make a key of its own ('ta_key').
   const OWN_SLOT = 'ta_key';
   const SHARED_SLOT = 'ht_api_key';
   // Opens Torn's "add new key" form with user > attacks pre-filled.
   const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=attacks&title=RetributionKey';
+  // Torn PDA swaps this placeholder for your own key when the script is pasted straight into it.
+  const PDA_KEY = '###PDA-APIKEY###';
+  const pdaKey = (PDA_KEY && !PDA_KEY.startsWith('###')) ? PDA_KEY : '';
   function readSlot(slot) { try { return localStorage.getItem(slot) || ''; } catch (e) { return ''; } }
   let ownKey = readSlot(OWN_SLOT);
-  const getKey = () => ownKey || readSlot(SHARED_SLOT);
+  // Order: a key you saved here, then the Torn PDA key, then the one the loader shared.
+  const getKey = () => ownKey || pdaKey || readSlot(SHARED_SLOT);
 
   // ---- time --------------------------------------------------------------
   const nowSec = () => Math.floor(Date.now() / 1000);
