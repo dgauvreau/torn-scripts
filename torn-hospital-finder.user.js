@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.42
+// @version      6.44
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.42"
+const VERSION="6.44"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -37,7 +37,9 @@ badgeOk()})
 function ensureBadge(){if(!onHospital||!lastError||!document.body)return
 const list=document.querySelector(".user-info-list-wrap")
 const host=list&&list.parentNode?list.parentNode:document.querySelector("#mainContainer, .content-wrapper")||document.body
-if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}window.addEventListener("error",e=>{reportError(e&&e.message)})
+if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}window.addEventListener("error",e=>{const f=e&&e.filename||""
+if(/\.js(\?|#|$)/.test(f))return
+reportError(e&&e.message)})
 setInterval(ensureBadge,1e3)
 try{let API_KEY="###PDA-APIKEY###"
 if(!API_KEY||API_KEY.startsWith("###")){try{API_KEY=localStorage.getItem("ht_api_key")||""}catch(e){API_KEY=""}}function ensureKey(){if(API_KEY)return true
@@ -273,50 +275,52 @@ if(looksLoading())none.innerHTML="<i>Loading\u2026</i>"
 else none.innerHTML="<i>None found</i>"+(shortestOnPage===null?" - the page shows no rows":" - shortest time on this page: "+fmtLeft(shortestOnPage))
 panel.appendChild(none)
 updateCount()
-return}const table=document.createElement("table")
-table.style.cssText="width:100%;border-collapse:collapse;margin-top:8px;"
-const hdr=document.createElement("tr")
-const th=(txt,al)=>'<th style="text-align:'+al+';opacity:.7;font-weight:normal;font-size:12px;padding:4px;">'+txt+"</th>"
-hdr.innerHTML=th("Name","left")+th("Lvl","right")+th("Health","right")+th("Faction","center")+th("","center")
-table.appendChild(hdr)
-targets.forEach(t=>{const tr=document.createElement("tr")
-tr.style.cssText="border-top:1px solid rgba(128,128,128,.4);font-size:15px;"
-const tdName=document.createElement("td")
-tdName.style.cssText="padding:10px 4px;font-weight:bold;word-break:break-word;"
-const a=document.createElement("a")
-a.href="https://www.torn.com/profiles.php?XID="+t.id
-a.target="_blank"
-a.textContent=t.name
-a.style.cssText="color:inherit;text-decoration:underline;"
-tdName.appendChild(a)
-const tdLvl=document.createElement("td")
-tdLvl.style.cssText="padding:10px 4px;text-align:right;"
-tdLvl.textContent=t.lvl!==null?t.lvl:"?"
-const tdLife=document.createElement("td")
-tdLife.style.cssText="padding:10px 4px;text-align:right;"
-tdLife.textContent=API_KEY?"\u2026":"\u2013"
-const tdFac=document.createElement("td")
-tdFac.style.cssText="padding:10px 4px;text-align:center;white-space:nowrap;"
-tdFac.textContent=API_KEY?"\u2026":"\u2013"
-const tdAtk=document.createElement("td")
-tdAtk.style.cssText="padding:10px 0 10px 4px;text-align:center;white-space:nowrap;"
+return}const list=document.createElement("div")
+list.style.cssText="margin-top:10px;"
+targets.forEach(t=>{const row=document.createElement("div")
+row.style.cssText="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(128,128,128,.4);"
+const prof=document.createElement("a")
+prof.href="https://www.torn.com/profiles.php?XID="+t.id
+prof.target="_blank"
+prof.style.cssText="flex:1;min-width:0;color:inherit;text-decoration:none;display:block;"
+const nm=document.createElement("div")
+nm.textContent=t.name
+nm.style.cssText="font-size:17px;font-weight:bold;text-decoration:underline;word-break:break-word;"
+const info=document.createElement("div")
+info.style.cssText="margin-top:3px;opacity:.85;font-size:13px;"
+const lvlEl=document.createElement("span")
+lvlEl.textContent=t.lvl!==null?t.lvl:"?"
+const lifeEl=document.createElement("span")
+lifeEl.textContent=API_KEY?"\u2026":"\u2013"
+const facEl=document.createElement("span")
+facEl.textContent=API_KEY?"\u2026":"\u2013"
+const dot=()=>{const d=document.createElement("span")
+d.textContent="  \xb7  "
+d.style.cssText="opacity:.5;"
+return d}
+const txt=x=>document.createTextNode(x)
+info.appendChild(txt("Lvl "))
+info.appendChild(lvlEl)
+info.appendChild(dot())
+info.appendChild(txt("Health "))
+info.appendChild(lifeEl)
+info.appendChild(dot())
+info.appendChild(facEl)
+prof.appendChild(nm)
+prof.appendChild(info)
 const atk=document.createElement("a")
 atk.href="https://www.torn.com/loader.php?sid=attack&user2ID="+t.id
 atk.target="_blank"
-atk.textContent="\u2694 ATTACK"
-atk.style.cssText="display:inline-block;padding:8px 10px;background:#7a1f1f;color:#fff;border:1px solid #b44;"+"border-radius:5px;font-weight:bold;font-size:12px;text-decoration:none;"
-tdAtk.appendChild(atk)
-tr.appendChild(tdName)
-tr.appendChild(tdLvl)
-tr.appendChild(tdLife)
-tr.appendChild(tdFac)
-tr.appendChild(tdAtk)
-tr.lvlEl=tdLvl
-tr.lifeEl=tdLife
-tr.facEl=tdFac
-boxes[t.id]=tr
-table.appendChild(tr)})
-panel.appendChild(table)
+atk.textContent="Attack"
+atk.style.cssText="flex:none;padding:6px 12px;color:inherit;border:1px solid rgba(128,128,128,.6);"+"border-radius:5px;font-size:12px;text-decoration:none;opacity:.85;"
+row.appendChild(prof)
+row.appendChild(atk)
+row.lvlEl=lvlEl
+row.lifeEl=lifeEl
+row.facEl=facEl
+boxes[t.id]=row
+list.appendChild(row)})
+panel.appendChild(list)
 updateCount()}let liveTimer=null,lastSig=null,liveStart=0,jumpRetries=0
 const kept=new Map
 function numberLinks(){return[...document.querySelectorAll('[class*="pagination"] a, [class*="pager"] a')].filter(a=>/^\d+$/.test(a.textContent.trim())).map(a=>({a:a,n:+a.textContent.trim()}))}
