@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.37
+// @version      6.38
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,36 +22,22 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.37"
-let scanFn=null
-const badge=document.createElement("button")
-badge.type="button"
+const VERSION="6.38"
+const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
-badge.title="Torn Find Target "+VERSION
-badge.className="torn-btn"
-const PILL="display:inline-block;vertical-align:middle;box-sizing:border-box;max-width:100%;margin:2px 8px;cursor:pointer;"
-badge.style.cssText=PILL
-badge.textContent="\ud83c\udfaf Find Target"
+badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
 let lastError=""
 function badgeOk(){lastError=""
-badge.style.cssText=PILL
-badge.textContent="\ud83c\udfaf Find Target"}function reportError(msg){lastError=String(msg||"unknown error").slice(0,200)
-badge.style.cssText=PILL+"color:#f66;white-space:normal;height:auto;line-height:1.3;text-align:left;"
-badge.textContent="\ud83c\udfaf "+VERSION+" \u26a0 "+lastError+" (tap to clear)"}badge.addEventListener("click",e=>{e.preventDefault()
+badge.style.display="none"}function reportError(msg){lastError=String(msg||"unknown error").slice(0,200)
+badge.textContent="\ud83c\udfaf Find Target "+VERSION+" \u26a0 "+lastError+" (tap to dismiss)"
+badge.style.display="block"
+ensureBadge()}badge.addEventListener("click",e=>{e.preventDefault()
 e.stopPropagation()
-if(lastError){badgeOk()
-return}if(scanFn)scanFn()})
-function onTargetsPage(){return location.pathname.includes("page.php")&&/[?&]sid=list/.test(location.search)&&/[?&]type=targets/.test(location.search)}function ensureBadge(){
-if(!onHospital&&!onTargetsPage()){if(badge.parentNode)badge.remove()
-return}if(!document.body)return
-const title=document.querySelector('.content-title, [class*="content-title"]')
-if(title){const heading=title.querySelector('h1, h2, h3, h4, [class*="title"]')
-if(heading&&heading.parentNode===title){if(heading.nextElementSibling!==badge)heading.insertAdjacentElement("afterend",badge)
-}else if(badge.parentNode!==title)title.insertBefore(badge,title.firstChild)}else{const host=document.querySelector("#mainContainer .content-wrapper, .content-wrapper, #mainContainer")||document.body
-if(badge.parentNode!==host)host.insertBefore(badge,host.firstChild)}}window.addEventListener("error",e=>{reportError(e&&e.message)})
-ensureBadge()
-document.addEventListener("DOMContentLoaded",ensureBadge)
-window.addEventListener("load",ensureBadge)
+badgeOk()})
+function ensureBadge(){if(!onHospital||!lastError||!document.body)return
+const list=document.querySelector(".user-info-list-wrap")
+const host=list&&list.parentNode?list.parentNode:document.querySelector("#mainContainer, .content-wrapper")||document.body
+if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}window.addEventListener("error",e=>{reportError(e&&e.message)})
 setInterval(ensureBadge,1e3)
 try{let API_KEY="###PDA-APIKEY###"
 if(!API_KEY||API_KEY.startsWith("###")){try{API_KEY=localStorage.getItem("ht_api_key")||""}catch(e){API_KEY=""}}function ensureKey(){if(API_KEY)return true
@@ -59,7 +45,7 @@ const k=prompt("Torn API key (a limited-access key is fine):")
 if(k){API_KEY=k.trim()
 try{localStorage.setItem("ht_api_key",API_KEY)}catch(e){}return true}return false}const btn=document.createElement("button")
 const panel=document.createElement("div")
-panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:#1a1a1a;color:#ccc;font:12px sans-serif;padding:8px;"+"border:1px solid #444;border-radius:6px;"
+panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:linear-gradient(#3c3c3c,#2e2e2e);color:#ddd;font:13px Arial,sans-serif;padding:8px 10px;"+"border:1px solid #1c1c1c;border-radius:5px;"
 let scanning=false
 function showIdle(){panel.textContent=""
 panel.style.display="block"
@@ -464,6 +450,5 @@ return}jumpAndScan()})
 try{const freshStart=onHospital&&!!sessionStorage.getItem(FLAG)
 const resumed=onHospital&&!freshStart?takeWalkState():null
 if(resumed){startLive(resumed)}else if(freshStart){sessionStorage.removeItem(FLAG)
-jumpAndScan()}}catch(err){reportError(err&&err.message)}scanFn=()=>btn.click()
-if(!lastError)badgeOk()}catch(err){reportError(err&&err.message)}})()
+jumpAndScan()}}catch(err){reportError(err&&err.message)}}catch(err){reportError(err&&err.message)}})()
 

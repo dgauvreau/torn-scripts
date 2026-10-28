@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.37
+// @version      6.38
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,56 +24,31 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.37';
+  const VERSION = '6.38';
 
-  // ---- the Find Target button (in the page header) ---------------------------
-  // One small pill in the header of the hospital page and of your targets list, next to the page title. Tap it to
-  // start a scan (from the targets list it takes you to the hospital page first). It is created before anything
-  // else can fail, and turns red with the error text if the script breaks.
-  let scanFn = null;
-  const badge = document.createElement('button');
-  badge.type = 'button';
+  // ---- error notice -----------------------------------------------------------
+  // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
+  // the error text shows on the hospital page (tap it to dismiss).
+  const badge = document.createElement('div');
   badge.setAttribute('data-find-target-badge', '1');
-  badge.title = 'Torn Find Target ' + VERSION;
-  // Torn's own button class (torn-btn) gives it the site's colours, font and light/dark theme; the inline style
-  // only handles spacing.
-  badge.className = 'torn-btn';
-  const PILL = 'display:inline-block;vertical-align:middle;box-sizing:border-box;max-width:100%;margin:2px 8px;cursor:pointer;';
-  badge.style.cssText = PILL;
-  badge.textContent = '\ud83c\udfaf Find Target';
+  badge.style.cssText = 'display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;' +
+    'border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;';
   let lastError = '';
-  function badgeOk() { lastError = ''; badge.style.cssText = PILL; badge.textContent = '\ud83c\udfaf Find Target'; }
+  function badgeOk() { lastError = ''; badge.style.display = 'none'; }
   function reportError(msg) {
     lastError = String(msg || 'unknown error').slice(0, 200);
-    badge.style.cssText = PILL + 'color:#f66;white-space:normal;height:auto;line-height:1.3;text-align:left;';
-    badge.textContent = '\ud83c\udfaf ' + VERSION + ' \u26a0 ' + lastError + ' (tap to clear)';
+    badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' \u26a0 ' + lastError + ' (tap to dismiss)';
+    badge.style.display = 'block';
+    ensureBadge();
   }
-  badge.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    if (lastError) { badgeOk(); return; }
-    if (scanFn) scanFn();
-  });
-  function onTargetsPage() {
-    return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
-  }
+  badge.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); badgeOk(); });
   function ensureBadge() {
-    if (!onHospital && !onTargetsPage()) { if (badge.parentNode) badge.remove(); return; }
-    if (!document.body) return;
-    const title = document.querySelector('.content-title, [class*="content-title"]');
-    if (title) {
-      // inside the title bar, right after the heading, so it sits beside the page name
-      const heading = title.querySelector('h1, h2, h3, h4, [class*="title"]');
-      if (heading && heading.parentNode === title) { if (heading.nextElementSibling !== badge) heading.insertAdjacentElement('afterend', badge); }
-      else if (badge.parentNode !== title) title.insertBefore(badge, title.firstChild);
-    } else {
-      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer') || document.body;
-      if (badge.parentNode !== host) host.insertBefore(badge, host.firstChild);
-    }
+    if (!onHospital || !lastError || !document.body) return;
+    const list = document.querySelector('.user-info-list-wrap');
+    const host = list && list.parentNode ? list.parentNode : (document.querySelector('#mainContainer, .content-wrapper') || document.body);
+    if (badge.parentNode !== host) host.insertBefore(badge, list && list.parentNode === host ? list : host.firstChild);
   }
   window.addEventListener('error', (e) => { reportError(e && e.message); });
-  ensureBadge();
-  document.addEventListener('DOMContentLoaded', ensureBadge);
-  window.addEventListener('load', ensureBadge);
   setInterval(ensureBadge, 1000);
 
   try {
@@ -104,8 +79,8 @@
   const panel = document.createElement('div');
   panel.style.cssText =
     'display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;' +
-    'background:#1a1a1a;color:#ccc;font:12px sans-serif;padding:8px;' +
-    'border:1px solid #444;border-radius:6px;';
+    'background:linear-gradient(#3c3c3c,#2e2e2e);color:#ddd;font:13px Arial,sans-serif;padding:8px 10px;' +
+    'border:1px solid #1c1c1c;border-radius:5px;';
 
   let scanning = false;
   function showIdle() {
@@ -839,7 +814,5 @@
     }
   } catch (err) { reportError(err && err.message); }
 
-  scanFn = () => btn.click();
-  if (!lastError) badgeOk();
   } catch (err) { reportError(err && err.message); }
 })();
