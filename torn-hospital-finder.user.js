@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.51
+// @version      6.52
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.51"
+const VERSION="6.52"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -52,25 +52,35 @@ const panel=document.createElement("div")
 panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:rgba(128,128,128,.12);color:inherit;font-size:14px;padding:10px;"+"border:1px solid rgba(128,128,128,.35);border-radius:5px;"
 let scanning=false
 function showIdle(){panel.textContent=""
-panel.style.display="block"
-const b=document.createElement("button")
-b.type="button"
-b.textContent="Find Targets"
-b.style.cssText="display:block;width:100%;padding:6px 0;background:transparent;color:inherit;border:0;"+"font:inherit;font-weight:bold;font-size:14px;cursor:pointer;"
-b.addEventListener("click",safe(e=>{e.preventDefault()
-btn.click()}))
-panel.appendChild(b)}function ensureUI(){if(!onHospital)return
+panel.style.display="none"}function ensureUI(){if(!onHospital)return
 const list=document.querySelector(".user-info-list-wrap")
 let parent=null,before=null
 if(list&&list.parentNode){parent=list.parentNode
 before=list}else{const title=document.querySelector('.content-title, [class*="content-title"]')
 if(title&&title.parentNode){parent=title.parentNode
 before=title.nextSibling}else{parent=document.querySelector("#mainContainer, .content-wrapper")||document.body}}if(!parent)return
-if(panel.parentNode!==parent||before&&panel.nextSibling!==before)parent.insertBefore(panel,before)
-if(!scanning&&panel.style.display==="none")showIdle()}ensureUI()
+if(panel.parentNode!==parent||before&&panel.nextSibling!==before)parent.insertBefore(panel,before)}ensureUI()
 document.addEventListener("DOMContentLoaded",ensureUI)
 window.addEventListener("load",ensureUI)
 setInterval(ensureUI,2e3)
+const hdrBtn=document.createElement("button")
+hdrBtn.type="button"
+hdrBtn.setAttribute("data-find-target-btn","1")
+hdrBtn.textContent="Find Targets"
+const HDR_BASE="box-sizing:border-box;padding:8px 20px;font:inherit;font-size:14px;font-weight:bold;letter-spacing:.3px;color:inherit;"+"background:linear-gradient(rgba(255,255,255,.16),rgba(128,128,128,.22));border:1px solid rgba(128,128,128,.7);border-radius:7px;"+"box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);cursor:pointer;white-space:nowrap;z-index:5;"
+hdrBtn.addEventListener("click",safe(e=>{e.preventDefault()
+e.stopPropagation()
+btn.click()}))
+function ensureHdrBtn(){if(!onHospital)return
+const title=document.querySelector('.content-title, [class*="content-title"]')
+if(title){if(getComputedStyle(title).position==="static")title.style.position="relative"
+hdrBtn.style.cssText=HDR_BASE+"position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
+if(hdrBtn.parentNode!==title)title.appendChild(hdrBtn)}else{const host=document.querySelector("#mainContainer .content-wrapper, .content-wrapper, #mainContainer")||document.body
+hdrBtn.style.cssText=HDR_BASE+"display:block;margin:8px auto;"
+if(hdrBtn.parentNode!==host)host.insertBefore(hdrBtn,host.firstChild)}}ensureHdrBtn()
+document.addEventListener("DOMContentLoaded",ensureHdrBtn)
+window.addEventListener("load",ensureHdrBtn)
+setInterval(ensureHdrBtn,1e3)
 function parseSeconds(text){if(!text)return null
 const t=text.trim()
 let m=t.match(/(\d+):(\d+):(\d+)/)
