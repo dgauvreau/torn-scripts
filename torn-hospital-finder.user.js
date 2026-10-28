@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.38
+// @version      6.39
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.38"
+const VERSION="6.39"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -45,7 +45,7 @@ const k=prompt("Torn API key (a limited-access key is fine):")
 if(k){API_KEY=k.trim()
 try{localStorage.setItem("ht_api_key",API_KEY)}catch(e){}return true}return false}const btn=document.createElement("button")
 const panel=document.createElement("div")
-panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:linear-gradient(#3c3c3c,#2e2e2e);color:#ddd;font:13px Arial,sans-serif;padding:8px 10px;"+"border:1px solid #1c1c1c;border-radius:5px;"
+panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:rgba(128,128,128,.12);color:inherit;font-size:13px;padding:8px 10px;"+"border:1px solid rgba(128,128,128,.35);border-radius:5px;"
 let scanning=false
 function showIdle(){panel.textContent=""
 panel.style.display="block"
@@ -167,7 +167,7 @@ const j=await r.json()
 cache[id]=j.error?"error":j}catch(e){cache[id]="error"}delete inflight[id]})()
 return inflight[id]}function smallBtn(label,fn){const b=document.createElement("button")
 b.textContent=label
-b.style.cssText="margin-left:6px;padding:2px 8px;background:#333;color:#ddd;border:1px solid #777;"+"border-radius:10px;font:11px sans-serif;cursor:pointer;"
+b.style.cssText="margin-left:6px;padding:2px 8px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);"+"border-radius:10px;font:11px sans-serif;cursor:pointer;"
 b.addEventListener("click",e=>{e.stopPropagation()
 fn()})
 return b}function closePanel(){scanning=false
@@ -211,12 +211,12 @@ head.appendChild(smallBtn("Stop",closePanel))
 panel.appendChild(head)
 if(USE_LEVEL_LIMIT&&myLevel!==null){const lo=1,hi=sliderMax()
 const wrap=document.createElement("div")
-wrap.style.cssText="margin-top:4px;color:#aaa;"
+wrap.style.cssText="margin-top:4px;opacity:.8;"
 const lab=document.createElement("div")
 const box=document.createElement("div")
 box.style.cssText="position:relative;height:22px;margin:2px 6px 0;"
 const track=document.createElement("div")
-track.style.cssText="position:absolute;left:0;right:0;top:9px;height:4px;background:#444;border-radius:2px;"
+track.style.cssText="position:absolute;left:0;right:0;top:9px;height:4px;background:rgba(128,128,128,.5);border-radius:2px;"
 const fill=document.createElement("div")
 fill.style.cssText="position:absolute;top:9px;height:4px;background:#7cf;border-radius:2px;"
 const sty=document.createElement("style")
@@ -253,7 +253,7 @@ wrap.appendChild(sty)
 wrap.appendChild(lab)
 wrap.appendChild(box)
 panel.appendChild(wrap)}const dg=document.createElement("div")
-dg.style.cssText="color:#777;margin-top:2px;cursor:pointer;"
+dg.style.cssText="opacity:.55;margin-top:2px;cursor:pointer;"
 dg.textContent=diagText()
 dg.addEventListener("click",e=>{e.stopPropagation()
 diagOpen=!diagOpen
@@ -270,27 +270,26 @@ updateCount()
 return}const table=document.createElement("table")
 table.style.cssText="width:100%;border-collapse:collapse;margin-top:6px;"
 const hdr=document.createElement("tr")
-const th=(txt,al)=>'<th style="text-align:'+al+';color:#888;font-weight:normal;padding:2px 4px;">'+txt+"</th>"
+const th=(txt,al)=>'<th style="text-align:'+al+';opacity:.7;font-weight:normal;padding:2px 4px;">'+txt+"</th>"
 hdr.innerHTML=th("Name","left")+th("Lvl","right")+th("Health","right")+th("Faction","center")+th("","center")
 table.appendChild(hdr)
 targets.forEach(t=>{const tr=document.createElement("tr")
-tr.style.cssText="border-top:1px solid #444;"
+tr.style.cssText="border-top:1px solid rgba(128,128,128,.4);"
 const tdName=document.createElement("td")
 tdName.style.cssText="padding:5px 4px;"
 const a=document.createElement("a")
 a.href="https://www.torn.com/profiles.php?XID="+t.id
 a.target="_blank"
-a.style.color="#7cf"
 a.textContent=t.name
 tdName.appendChild(a)
 const tdLvl=document.createElement("td")
-tdLvl.style.cssText="padding:5px 4px;text-align:right;color:#ddd;"
+tdLvl.style.cssText="padding:5px 4px;text-align:right;"
 tdLvl.textContent=t.lvl!==null?t.lvl:"?"
 const tdLife=document.createElement("td")
-tdLife.style.cssText="padding:5px 4px;text-align:right;color:#ddd;"
+tdLife.style.cssText="padding:5px 4px;text-align:right;"
 tdLife.textContent=API_KEY?"\u2026":"\u2013"
 const tdFac=document.createElement("td")
-tdFac.style.cssText="padding:5px 4px;text-align:center;color:#999;white-space:nowrap;"
+tdFac.style.cssText="padding:5px 4px;text-align:center;opacity:.75;white-space:nowrap;"
 tdFac.textContent=API_KEY?"\u2026":"\u2013"
 const tdAtk=document.createElement("td")
 tdAtk.style.cssText="padding:5px 4px;text-align:center;white-space:nowrap;"
