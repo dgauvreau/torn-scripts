@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.53
+// @version      6.54
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.53"
+const VERSION="6.54"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -51,8 +51,7 @@ try{localStorage.setItem("ht_api_key",API_KEY)}catch(e){}return true}return fals
 const panel=document.createElement("div")
 panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:rgba(128,128,128,.12);color:inherit;font-size:14px;padding:10px;"+"border:1px solid rgba(128,128,128,.35);border-radius:5px;"
 let scanning=false
-function showIdle(){panel.textContent=""
-panel.style.display="none"}function ensureUI(){if(!onHospital)return
+function ensureUI(){if(!onHospital)return
 const list=document.querySelector(".user-info-list-wrap")
 let parent=null,before=null
 if(list&&list.parentNode){parent=list.parentNode
@@ -70,7 +69,7 @@ hdrBtn.textContent="Find Targets"
 const HDR_BASE="box-sizing:border-box;padding:8px 20px;font:inherit;font-size:14px;font-weight:bold;letter-spacing:.3px;color:inherit;"+"background:linear-gradient(rgba(255,255,255,.16),rgba(128,128,128,.22));border:1px solid rgba(128,128,128,.7);border-radius:7px;"+"box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);cursor:pointer;white-space:nowrap;z-index:5;"
 hdrBtn.addEventListener("click",safe(e=>{e.preventDefault()
 e.stopPropagation()
-btn.click()}))
+rescan()}))
 function ensureHdrBtn(){if(!onHospital)return
 const title=document.querySelector('.content-title, [class*="content-title"]')
 if(title){if(getComputedStyle(title).position==="static")title.style.position="relative"
@@ -180,25 +179,15 @@ cache[id]="loading"
 inflight[id]=(async()=>{try{const r=await fetch("https://api.torn.com/user/"+id+"?selections=profile&key="+API_KEY)
 const j=await r.json()
 cache[id]=j.error?"error":j}catch(e){cache[id]="error"}delete inflight[id]})()
-return inflight[id]}function smallBtn(label,fn){const b=document.createElement("button")
-b.textContent=label
-b.style.cssText="margin:0 8px 0 0;padding:6px 14px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);"+"border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer;"
-b.addEventListener("click",safe(e=>{e.stopPropagation()
-fn()}))
-return b}function closePanel(){scanning=false
-walk=null
-clearInterval(liveTimer)
-liveTimer=null
-getRows().forEach(r=>{r.style.outline=""})
-showIdle()}function rescan(){try{sessionStorage.removeItem(WALK_KEY)}catch(e){}sessionStorage.setItem(FLAG,"1")
+return inflight[id]}function rescan(){try{sessionStorage.removeItem(WALK_KEY)}catch(e){}sessionStorage.setItem(FLAG,"1")
 panel.textContent="Rescanning\u2026"
 location.href=HOSPITAL_URL+"?rescan="+Date.now()}const boxes={}
 let countEl=null
 let statusEl=null
 let dgEl=null
 let diagOpen=false
-function diagText(){if(diagOpen)return diag+" \xb7 my level: "+(myLevel===null?"unknown":myLevel)+" (tap to hide)"
-return pageNote+" \xb7 "+kept.size+" found \xb7 v"+VERSION+" \xb7 tap for details"}function looksLoading(){const pg=pageInfo()
+function diagText(){if(!diagOpen)return"Details \u25b8"
+return"Details \u25be  "+pageNote+" \xb7 "+kept.size+" found \xb7 v"+VERSION+" \xb7 "+diag+" \xb7 my level: "+(myLevel===null?"unknown":myLevel)}function looksLoading(){const pg=pageInfo()
 if(walk&&walk.moving)return true
 if(pg.cur!==null&&pg.max!==null&&pg.cur<pg.max&&!(walk&&walk.reachedLast))return true
 if(shortestOnPage===null)return Date.now()-liveStart<15e3
@@ -239,8 +228,6 @@ head.appendChild(countEl)
 statusEl=document.createElement("div")
 statusEl.style.cssText="opacity:.85;font-size:13px;margin:-4px 0 8px;"
 head.appendChild(statusEl)
-head.appendChild(smallBtn("Rescan",rescan))
-head.appendChild(smallBtn("Stop",closePanel))
 panel.appendChild(head)
 if(USE_LEVEL_LIMIT&&myLevel!==null){const lo=1,hi=sliderMax()
 const wrap=document.createElement("div")
@@ -289,7 +276,7 @@ row.appendChild(gMax)
 wrap.appendChild(lab)
 wrap.appendChild(row)
 panel.appendChild(wrap)}const dg=document.createElement("div")
-dg.style.cssText="opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;"
+dg.style.cssText="opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;line-height:1.4;"
 dg.textContent=diagText()
 dg.addEventListener("click",e=>{e.stopPropagation()
 diagOpen=!diagOpen

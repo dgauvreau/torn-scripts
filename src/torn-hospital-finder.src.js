@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.53
+// @version      6.54
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.53';
+  const VERSION = '6.54';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -94,11 +94,6 @@
     'border:1px solid rgba(128,128,128,.35);border-radius:5px;';
 
   let scanning = false;
-  function showIdle() {
-    // Nothing to show until a scan runs: the Find Targets button lives in the page header (below).
-    panel.textContent = '';
-    panel.style.display = 'none';
-  }
   function ensureUI() {
     if (!onHospital) return; // the results panel only exists on the hospital page
     // The panel sits inline, in the page itself, right above the hospital list.
@@ -126,7 +121,7 @@
   const HDR_BASE = 'box-sizing:border-box;padding:8px 20px;font:inherit;font-size:14px;font-weight:bold;letter-spacing:.3px;color:inherit;' +
     'background:linear-gradient(rgba(255,255,255,.16),rgba(128,128,128,.22));border:1px solid rgba(128,128,128,.7);border-radius:7px;' +
     'box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);cursor:pointer;white-space:nowrap;z-index:5;';
-  hdrBtn.addEventListener('click', safe((e) => { e.preventDefault(); e.stopPropagation(); btn.click(); }));
+  hdrBtn.addEventListener('click', safe((e) => { e.preventDefault(); e.stopPropagation(); rescan(); }));
   function ensureHdrBtn() {
     if (!onHospital) return;
     const title = document.querySelector('.content-title, [class*="content-title"]');
@@ -340,24 +335,6 @@
     return inflight[id];
   }
 
-  function smallBtn(label, fn) {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.style.cssText =
-      'margin:0 8px 0 0;padding:6px 14px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);' +
-      'border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer;';
-    b.addEventListener('click', safe((e) => { e.stopPropagation(); fn(); }));
-    return b;
-  }
-
-  function closePanel() {
-    scanning = false;
-    walk = null;
-    clearInterval(liveTimer); liveTimer = null;
-    getRows().forEach((r) => { r.style.outline = ''; });
-    showIdle();
-  }
-
   function rescan() {
     // Reload the hospital list so the rows (and times) are fresh, then scan again.
     try { sessionStorage.removeItem(WALK_KEY); } catch (e) {}
@@ -373,8 +350,9 @@
   let dgEl = null;
   let diagOpen = false;
   function diagText() {
-    if (diagOpen) return diag + ' · my level: ' + (myLevel === null ? 'unknown' : myLevel) + ' (tap to hide)';
-    return pageNote + ' · ' + kept.size + ' found · v' + VERSION + ' · tap for details';
+    if (!diagOpen) return 'Details \u25b8';
+    return 'Details \u25be  ' + pageNote + ' \u00b7 ' + kept.size + ' found \u00b7 v' + VERSION + ' \u00b7 ' + diag +
+      ' \u00b7 my level: ' + (myLevel === null ? 'unknown' : myLevel);
   }
   // True while the page still doesn't look like the end of the hospital list
   // (pager not on the last page yet, no rows yet, or only long-time rows showing).
@@ -447,8 +425,6 @@
     statusEl = document.createElement('div');
     statusEl.style.cssText = 'opacity:.85;font-size:13px;margin:-4px 0 8px;';
     head.appendChild(statusEl);
-    head.appendChild(smallBtn('Rescan', rescan));
-    head.appendChild(smallBtn('Stop', closePanel));
     panel.appendChild(head);
 
     if (USE_LEVEL_LIMIT && myLevel !== null) {
@@ -500,7 +476,7 @@
     }
 
     const dg = document.createElement('div');
-    dg.style.cssText = 'opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;';
+    dg.style.cssText = 'opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;line-height:1.4;';
     dg.textContent = diagText();
     dg.addEventListener('click', (e) => { e.stopPropagation(); diagOpen = !diagOpen; dg.textContent = diagText(); });
     panel.appendChild(dg);
