@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.40
+// @version      6.41
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.40"
+const VERSION="6.41"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -45,7 +45,7 @@ const k=prompt("Torn API key (a limited-access key is fine):")
 if(k){API_KEY=k.trim()
 try{localStorage.setItem("ht_api_key",API_KEY)}catch(e){}return true}return false}const btn=document.createElement("button")
 const panel=document.createElement("div")
-panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:rgba(128,128,128,.12);color:inherit;font-size:13px;padding:8px 10px;"+"border:1px solid rgba(128,128,128,.35);border-radius:5px;"
+panel.style.cssText="display:none;position:relative;box-sizing:border-box;width:100%;margin:6px 0;"+"background:rgba(128,128,128,.12);color:inherit;font-size:14px;padding:10px;"+"border:1px solid rgba(128,128,128,.35);border-radius:5px;"
 let scanning=false
 function showIdle(){panel.textContent=""
 panel.style.display="block"
@@ -168,7 +168,7 @@ const j=await r.json()
 cache[id]=j.error?"error":j}catch(e){cache[id]="error"}delete inflight[id]})()
 return inflight[id]}function smallBtn(label,fn){const b=document.createElement("button")
 b.textContent=label
-b.style.cssText="margin-left:6px;padding:2px 8px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);"+"border-radius:10px;font:11px sans-serif;cursor:pointer;"
+b.style.cssText="margin:0 8px 0 0;padding:6px 14px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);"+"border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer;"
 b.addEventListener("click",e=>{e.stopPropagation()
 fn()})
 return b}function closePanel(){scanning=false
@@ -206,55 +206,59 @@ const p2=n=>String(n).padStart(2,"0")
 const stamp=p2(when.getHours())+":"+p2(when.getMinutes())+":"+p2(when.getSeconds())
 const head=document.createElement("div")
 countEl=document.createElement("b")
+countEl.style.cssText="display:block;font-size:15px;margin-bottom:8px;"
 head.appendChild(countEl)
 head.appendChild(smallBtn("Rescan",rescan))
 head.appendChild(smallBtn("Stop",closePanel))
 panel.appendChild(head)
 if(USE_LEVEL_LIMIT&&myLevel!==null){const lo=1,hi=sliderMax()
 const wrap=document.createElement("div")
-wrap.style.cssText="margin-top:4px;opacity:.8;"
+wrap.style.cssText="margin-top:10px;"
 const lab=document.createElement("div")
-const box=document.createElement("div")
-box.style.cssText="position:relative;height:22px;margin:2px 6px 0;"
-const track=document.createElement("div")
-track.style.cssText="position:absolute;left:0;right:0;top:9px;height:4px;background:rgba(128,128,128,.5);border-radius:2px;"
-const fill=document.createElement("div")
-fill.style.cssText="position:absolute;top:9px;height:4px;background:#7cf;border-radius:2px;"
-const sty=document.createElement("style")
-sty.textContent=".ht-r{-webkit-appearance:none;appearance:none;background:transparent;position:absolute;left:0;top:0;width:100%;height:22px;margin:0;pointer-events:none;}"+".ht-r::-webkit-slider-runnable-track{background:transparent;}.ht-r::-moz-range-track{background:transparent;}"+".ht-r::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:16px;height:16px;border-radius:50%;background:#bbb;border:1px solid #666;}"+".ht-r::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:#bbb;border:1px solid #666;}"
-const mk=val=>{const el=document.createElement("input")
-el.type="range"
-el.className="ht-r"
-el.min=lo
-el.max=hi
-el.step=1
-el.value=val
-return el}
-const sMin=mk(minLevel()),sMax=mk(limitLevel())
-const upd=()=>{const a2=+sMin.value,b2=+sMax.value
-const span=Math.max(1,hi-lo)
-fill.style.left=(a2-lo)/span*100+"%"
-fill.style.width=(b2-a2)/span*100+"%"
-lab.textContent="Level "+a2+" to "+b2+" (you: "+myLevel+")"}
-const keep=changed=>{if(+sMin.value>+sMax.value){if(changed===sMin)sMin.value=sMax.value
-else sMax.value=sMin.value}upd()}
-sMin.addEventListener("input",()=>keep(sMin))
-sMax.addEventListener("input",()=>keep(sMax))
-const commit=()=>{try{localStorage.setItem("ht_min_level",sMin.value)
-localStorage.setItem("ht_max_level",sMax.value)}catch(e){}lastSig=null
-tick()}
-sMin.addEventListener("change",commit)
-sMax.addEventListener("change",commit)
-upd()
-box.appendChild(track)
-box.appendChild(fill)
-box.appendChild(sMin)
-box.appendChild(sMax)
-wrap.appendChild(sty)
+lab.style.cssText="opacity:.8;margin-bottom:6px;"
+lab.textContent="Level range (you: "+myLevel+")"
+const row=document.createElement("div")
+row.style.cssText="display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;"
+let curMin=minLevel(),curMax=limitLevel()
+let commitTimer=null
+const commit=()=>{clearTimeout(commitTimer)
+commitTimer=setTimeout(()=>{try{localStorage.setItem("ht_min_level",curMin)
+localStorage.setItem("ht_max_level",curMax)}catch(e){}lastSig=null
+tick()},500)}
+const stepper=(name,get,set)=>{const g=document.createElement("div")
+g.style.cssText="display:flex;align-items:center;gap:6px;"
+const nm=document.createElement("span")
+nm.textContent=name
+nm.style.cssText="opacity:.8;"
+const val=document.createElement("b")
+val.style.cssText="min-width:2.2em;text-align:center;font-size:16px;"
+const mkb=(txt,d)=>{const b=document.createElement("button")
+b.type="button"
+b.textContent=txt
+b.style.cssText="width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;"+"border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;"
+b.addEventListener("click",e=>{e.preventDefault()
+e.stopPropagation()
+set(get()+d)
+refresh()
+commit()})
+return b}
+g.appendChild(nm)
+g.appendChild(mkb("\u2212",-1))
+g.appendChild(val)
+g.appendChild(mkb("+",1))
+g.val=val
+return g}
+const gMin=stepper("From",()=>curMin,v=>{curMin=Math.max(lo,Math.min(v,curMax))})
+const gMax=stepper("To",()=>curMax,v=>{curMax=Math.min(hi,Math.max(v,curMin))})
+const refresh=()=>{gMin.val.textContent=curMin
+gMax.val.textContent=curMax}
+refresh()
+row.appendChild(gMin)
+row.appendChild(gMax)
 wrap.appendChild(lab)
-wrap.appendChild(box)
+wrap.appendChild(row)
 panel.appendChild(wrap)}const dg=document.createElement("div")
-dg.style.cssText="opacity:.55;margin-top:2px;cursor:pointer;"
+dg.style.cssText="opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;"
 dg.textContent=diagText()
 dg.addEventListener("click",e=>{e.stopPropagation()
 diagOpen=!diagOpen
@@ -269,36 +273,37 @@ else none.innerHTML="<i>None found</i>"+(shortestOnPage===null?" - the page show
 panel.appendChild(none)
 updateCount()
 return}const table=document.createElement("table")
-table.style.cssText="width:100%;border-collapse:collapse;margin-top:6px;"
+table.style.cssText="width:100%;border-collapse:collapse;margin-top:8px;"
 const hdr=document.createElement("tr")
-const th=(txt,al)=>'<th style="text-align:'+al+';opacity:.7;font-weight:normal;padding:2px 4px;">'+txt+"</th>"
+const th=(txt,al)=>'<th style="text-align:'+al+';opacity:.7;font-weight:normal;font-size:12px;padding:4px;">'+txt+"</th>"
 hdr.innerHTML=th("Name","left")+th("Lvl","right")+th("Health","right")+th("Faction","center")+th("","center")
 table.appendChild(hdr)
 targets.forEach(t=>{const tr=document.createElement("tr")
-tr.style.cssText="border-top:1px solid rgba(128,128,128,.4);"
+tr.style.cssText="border-top:1px solid rgba(128,128,128,.4);font-size:15px;"
 const tdName=document.createElement("td")
-tdName.style.cssText="padding:5px 4px;"
+tdName.style.cssText="padding:10px 4px;font-weight:bold;word-break:break-word;"
 const a=document.createElement("a")
 a.href="https://www.torn.com/profiles.php?XID="+t.id
 a.target="_blank"
 a.textContent=t.name
+a.style.cssText="color:inherit;text-decoration:underline;"
 tdName.appendChild(a)
 const tdLvl=document.createElement("td")
-tdLvl.style.cssText="padding:5px 4px;text-align:right;"
+tdLvl.style.cssText="padding:10px 4px;text-align:right;"
 tdLvl.textContent=t.lvl!==null?t.lvl:"?"
 const tdLife=document.createElement("td")
-tdLife.style.cssText="padding:5px 4px;text-align:right;"
+tdLife.style.cssText="padding:10px 4px;text-align:right;"
 tdLife.textContent=API_KEY?"\u2026":"\u2013"
 const tdFac=document.createElement("td")
-tdFac.style.cssText="padding:5px 4px;text-align:center;opacity:.75;white-space:nowrap;"
+tdFac.style.cssText="padding:10px 4px;text-align:center;white-space:nowrap;"
 tdFac.textContent=API_KEY?"\u2026":"\u2013"
 const tdAtk=document.createElement("td")
-tdAtk.style.cssText="padding:5px 4px;text-align:center;white-space:nowrap;"
+tdAtk.style.cssText="padding:10px 0 10px 4px;text-align:center;white-space:nowrap;"
 const atk=document.createElement("a")
 atk.href="https://www.torn.com/loader.php?sid=attack&user2ID="+t.id
 atk.target="_blank"
 atk.textContent="\u2694 ATTACK"
-atk.style.cssText="padding:1px 6px;background:#7a1f1f;color:#fff;border:1px solid #b44;"+"border-radius:3px;font-weight:bold;font-size:10px;text-decoration:none;"
+atk.style.cssText="display:inline-block;padding:8px 10px;background:#7a1f1f;color:#fff;border:1px solid #b44;"+"border-radius:5px;font-weight:bold;font-size:12px;text-decoration:none;"
 tdAtk.appendChild(atk)
 tr.appendChild(tdName)
 tr.appendChild(tdLvl)
