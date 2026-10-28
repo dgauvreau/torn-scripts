@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.52
+// @version      6.53
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.52"
+const VERSION="6.53"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -445,7 +445,7 @@ else if(shortestOnPage!==null&&(shortestOnPage<=MAX_SECONDS||pg.max===null&&Date
 onPage.forEach(t=>{if(!kept.has(t.id))kept.set(t.id,t)})
 let found=[...kept.values()].filter(t=>!excluded(cache[t.id]))
 if(USE_LEVEL_LIMIT&&myLevel!==null)found=found.filter(t=>t.lvl===null||t.lvl<=limitLevel()&&t.lvl>=minLevel())
-candidateCount=found.length
+candidateCount=Math.min(found.length,MAX_LOOKUPS)
 diag+=" \xb7 saved: "+kept.size+(USE_LEVEL_LIMIT?" \xb7 levels "+minLevel()+"\u2013"+limitLevel()+": "+found.length:"")
 stepWalk(pg,sigNow)
 diag+=walkDiag()
