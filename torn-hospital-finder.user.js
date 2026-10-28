@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.30
-// @description  On the hospital page only, a Find Target panel scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API).
+// @version      6.31
+// @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps stepping back through earlier hospital pages.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -17,8 +17,11 @@
   const USE_FACTION_FILTER = true;  // skip people in a faction
   const MAX_SECONDS = 600;  // skip anyone with more than this left in hospital (checked on the page AND against the API)
   const MAX_LOOKUPS = 10;   // only look up details for this many of the most promising people
+  const MIN_RESULTS = 10;   // if fewer people than this match on the last hospital page, step back through earlier pages
+  const MAX_BACK_PAGES = 5; // ...but never go back more than this many pages
   const MIN_INACTIVE_DAYS = 7; // (unused for now)
   const FLAG = 'ht_find_target';
+  const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
 
@@ -81,6 +84,35 @@
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
   setInterval(ensureUI, 2000);
+
+  // ---- Find Target button on the targets page ------------------------------
+  // A button right under the title of your targets list. It takes you to the hospital page and starts the
+  // scan there (the same thing the Scan button in the hospital panel does).
+  const targetsBtn = document.createElement('button');
+  targetsBtn.type = 'button';
+  targetsBtn.setAttribute('data-find-target-btn', '1');
+  targetsBtn.style.cssText =
+    'display:inline-block;margin:6px 0;padding:6px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;' +
+    'border-radius:12px;font:bold 13px sans-serif;cursor:pointer;';
+  targetsBtn.textContent = '🎯 Find Target';
+  targetsBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); btn.click(); });
+  function onTargetsPage() {
+    return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
+  }
+  function ensureTargetsBtn() {
+    if (!onTargetsPage()) { if (targetsBtn.parentNode) targetsBtn.remove(); return; }
+    const title = document.querySelector('.content-title, [class*="content-title"]');
+    if (title && title.parentNode) {
+      if (targetsBtn.previousElementSibling !== title) title.insertAdjacentElement('afterend', targetsBtn);
+    } else {
+      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer');
+      if (host && targetsBtn.parentNode !== host) host.insertBefore(targetsBtn, host.firstChild);
+    }
+  }
+  ensureTargetsBtn();
+  document.addEventListener('DOMContentLoaded', ensureTargetsBtn);
+  window.addEventListener('load', ensureTargetsBtn);
+  setInterval(ensureTargetsBtn, 1500);
 
   // ---- parsing helpers ---------------------------------------------------
   function parseSeconds(text) {
@@ -189,6 +221,8 @@
   let pageNote = '';
   let lastTargets = [];
   const collectTargets = () => lastTargets;
+  // State of the search across hospital pages: null when not scanning.
+  let walk = null;
 
   function collect() {
     const rows = getRows();
@@ -286,6 +320,7 @@
 
   function closePanel() {
     scanning = false;
+    walk = null;
     clearInterval(liveTimer); liveTimer = null;
     getRows().forEach((r) => { r.style.outline = ''; });
     showIdle();
@@ -293,6 +328,7 @@
 
   function rescan() {
     // Reload the hospital list so the rows (and times) are fresh, then scan again.
+    try { sessionStorage.removeItem(WALK_KEY); } catch (e) {}
     sessionStorage.setItem(FLAG, '1');
     location.href = HOSPITAL_URL;
   }
@@ -309,17 +345,19 @@
   // (pager not on the last page yet, no rows yet, or only long-time rows showing).
   function looksLoading() {
     const pg = pageInfo();
-    if (pg.cur !== null && pg.max !== null && pg.cur < pg.max) return true;
+    if (walk && walk.moving) return true; // opening an earlier page
+    // Once the last page has been reached, being on an earlier page is on purpose, not "still loading".
+    if (pg.cur !== null && pg.max !== null && pg.cur < pg.max && !(walk && walk.reachedLast)) return true;
     if (shortestOnPage === null) return Date.now() - liveStart < 15000;
-    if (shortestOnPage > MAX_SECONDS) return true;
+    if (shortestOnPage > MAX_SECONDS) return !(walk && walk.reachedLast && walk.stable >= 2);
     return false;
   }
 
   function updateCount() {
     if (!countEl) return;
     const n = Object.keys(boxes).filter((k) => boxes[k].parentNode).length;
-    countEl.textContent = (n === 0 && looksLoading()) ? 'Loading…'
-      : 'Targets: ' + n + (candidateCount > MAX_LOOKUPS ? ' (top ' + MAX_LOOKUPS + ' of ' + candidateCount + ')' : '');
+    countEl.textContent = ((n === 0 && looksLoading()) ? 'Loading…'
+      : 'Targets: ' + n + (candidateCount > MAX_LOOKUPS ? ' (top ' + MAX_LOOKUPS + ' of ' + candidateCount + ')' : '')) + walkNote();
   }
 
   // Once a target's API details are in, drop them if they don't qualify
@@ -491,24 +529,117 @@
   // (or swaps the page). Only the API check (faction / level / long timer) removes anyone.
   const kept = new Map(); // id -> target
 
+  // ---- stepping back through earlier hospital pages -----------------------------
+  // The scan starts on the last hospital page (shortest times). If fewer than MIN_RESULTS people match
+  // there, it opens the previous page, then the one before, and so on, adding what it finds, until it has
+  // enough matches, reaches page 1, a page is entirely over the time limit (earlier pages only get longer),
+  // or it has gone back MAX_BACK_PAGES pages.
+  function prevLink(pg) {
+    const links = [...document.querySelectorAll('[class*="pagination"] a, [class*="pager"] a')];
+    if (pg.cur !== null) {
+      const byNum = links.find((a) => a.textContent.trim() === String(pg.cur - 1));
+      if (byNum) return byNum;
+    }
+    return links.find((a) => {
+      const label = (a.title || '') + ' ' + (a.getAttribute('aria-label') || '') + ' ' + (a.textContent || '') + ' ' + (a.className || '');
+      return /prev|‹|<|←/i.test(label) && !/disabled|inactive/i.test(label);
+    }) || null;
+  }
+  // If Torn reloads the whole page when we click a page link, everything found so far is carried over
+  // in sessionStorage so the search carries on (instead of starting again and looping).
+  let walkSaveTimer = null;
+  function saveWalkState() {
+    try {
+      sessionStorage.setItem(WALK_KEY, JSON.stringify({ t: Date.now(), back: walk.back + 1, kept: [...kept.values()] }));
+      clearTimeout(walkSaveTimer);
+      walkSaveTimer = setTimeout(() => { try { sessionStorage.removeItem(WALK_KEY); } catch (e) {} }, 10000);
+    } catch (e) {}
+  }
+  function takeWalkState() {
+    try {
+      const raw = sessionStorage.getItem(WALK_KEY);
+      if (!raw) return null;
+      sessionStorage.removeItem(WALK_KEY);
+      const o = JSON.parse(raw);
+      if (o && Date.now() - o.t < 20000 && Array.isArray(o.kept)) return o;
+    } catch (e) {}
+    return null;
+  }
+  function walkNote() {
+    if (!walk) return '';
+    if (walk.stuck) return ' · couldn’t open an earlier page';
+    if (walk.moving) return ' · opening an earlier page…';
+    return walk.back > 0 ? ' · searched ' + (walk.back + 1) + ' pages' : '';
+  }
+  function walkDiag() {
+    if (!walk) return '';
+    return ' · pages searched: ' + (walk.back + 1) + (walk.reachedLast ? '' : ' (finding the last page)') +
+      (walk.why ? ' · stopped: ' + walk.why : '') + (walk.stuck ? ' · stuck' : '');
+  }
+  function stepWalk(pg, sigNow) {
+    if (!walk || !walk.reachedLast || walk.stuck) return;
+    if (walk.moving) {
+      // Waiting for the earlier page to show: the list changes and the pager moves to the page we asked for.
+      const changed = !!sigNow && sigNow !== walk.sigBefore;
+      const landed = walk.expect === null || pg.cur === null || pg.cur === walk.expect;
+      if (changed && landed) { walk.moving = false; walk.back++; walk.stable = 0; walk.lastSig = sigNow; return; }
+      if (Date.now() - walk.clickedAt > 8000) {
+        const l = walk.clicks < 3 ? prevLink(pg) : null;
+        if (!l) { walk.stuck = true; walk.moving = false; return; }
+        walk.clicks++; walk.clickedAt = Date.now();
+        saveWalkState();
+        l.click();
+      }
+      return;
+    }
+    if (walk.stable < 2) return; // wait until the page has finished loading
+    walk.why = '';
+    if (candidateCount >= MIN_RESULTS) { walk.why = MIN_RESULTS + ' matches found'; return; }
+    if (pg.cur !== null && pg.cur <= 1) { walk.why = 'reached the first page'; return; }
+    if (shortestOnPage === null) return;
+    if (shortestOnPage > MAX_SECONDS) { walk.why = 'earlier pages are all over ' + Math.round(MAX_SECONDS / 60) + ' min'; return; }
+    if (walk.back >= MAX_BACK_PAGES) { walk.why = 'page limit (' + MAX_BACK_PAGES + ' earlier pages)'; return; }
+    const link = prevLink(pg);
+    if (!link) { walk.why = 'no earlier page link'; return; }
+    walk.moving = true;
+    walk.sigBefore = sigNow;
+    walk.expect = pg.cur !== null ? pg.cur - 1 : null;
+    walk.clicks = 1;
+    walk.clickedAt = Date.now();
+    saveWalkState();
+    link.click();
+  }
+
   function tick() {
     if (!scanning) { clearInterval(liveTimer); liveTimer = null; return; }
+    if (!walk) return;
 
     // If the pager still isn't on the last page after a few seconds, click the last-page link again.
     const pg = pageInfo();
-    if (pg.cur !== null && pg.max !== null && pg.cur < pg.max && jumpRetries < 3 && Date.now() - liveStart > 5000 * (jumpRetries + 1)) {
+    if (!walk.reachedLast && pg.cur !== null && pg.max !== null && pg.cur < pg.max && jumpRetries < 3 && Date.now() - liveStart > 5000 * (jumpRetries + 1)) {
       jumpRetries++;
       const l = findLastPageLink();
       if (l) l.click();
     }
 
     collect(); // refreshes the page diagnostics and highlights
+
+    // Has the list stopped changing (page fully loaded), and are we on the last page yet?
+    const sigNow = listSignature();
+    if (sigNow && sigNow === walk.lastSig) walk.stable++; else { walk.stable = 0; walk.lastSig = sigNow; }
+    if (!walk.reachedLast) {
+      if (pg.cur !== null && pg.max !== null) walk.reachedLast = pg.cur >= pg.max;
+      else if (shortestOnPage !== null && (shortestOnPage <= MAX_SECONDS || (pg.max === null && Date.now() - liveStart > 6000))) walk.reachedLast = true;
+    }
+
     const onPage = collectTargets();
     onPage.forEach((t) => { if (!kept.has(t.id)) kept.set(t.id, t); });
     let found = [...kept.values()].filter((t) => !excluded(cache[t.id]));
     if (USE_LEVEL_LIMIT && myLevel !== null) found = found.filter((t) => t.lvl === null || (t.lvl <= limitLevel() && t.lvl >= minLevel()));
     candidateCount = found.length;
     diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · levels ' + minLevel() + '–' + limitLevel() + ': ' + found.length : '');
+    stepWalk(pg, sigNow); // may open the previous page if there are still too few matches
+    diag += walkDiag();
     // Lowest level first when the level limit is on, otherwise soonest out first.
     found.sort((a, b) => {
       if (!USE_LEVEL_LIMIT) return a.secs - b.secs;
@@ -530,10 +661,11 @@
       }
     } else {
       if (dgEl) dgEl.textContent = diagText();
+      updateCount();
     }
   }
 
-  function startLive() {
+  function startLive(resume) {
     scanning = true;
     ensureKey();
     panel.style.display = 'block';
@@ -541,6 +673,14 @@
     lastSig = null;
     kept.clear();
     jumpRetries = 0;
+    if (!resume) { try { sessionStorage.removeItem(WALK_KEY); } catch (e) {} } // a fresh search never inherits an old one
+    walk = { reachedLast: false, back: 0, moving: false, stuck: false, stable: 0, lastSig: '', sigBefore: '', expect: null, clicks: 0, clickedAt: 0, why: '' };
+    if (resume) {
+      // Torn reloaded the page when we stepped back: carry on with everything found so far.
+      resume.kept.forEach((t) => kept.set(t.id, t));
+      walk.back = resume.back;
+      walk.reachedLast = true;
+    }
     liveStart = Date.now();
     clearInterval(liveTimer);
     loadMyLevel(); // not awaited: the list shows right away and re-filters once your level is known
@@ -605,7 +745,13 @@
     jumpAndScan();
   });
 
-  if (onHospital && sessionStorage.getItem(FLAG)) {
+  // Arriving from the Find Target / Rescan button (flag set) always starts a fresh search; arriving without it
+  // right after stepping back a page means Torn reloaded the page, so carry on where we were.
+  const freshStart = onHospital && !!sessionStorage.getItem(FLAG);
+  const resumed = onHospital && !freshStart ? takeWalkState() : null;
+  if (resumed) {
+    startLive(resumed);
+  } else if (freshStart) {
     sessionStorage.removeItem(FLAG);
     jumpAndScan();
   }
