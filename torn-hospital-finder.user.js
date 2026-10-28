@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.31
-// @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps stepping back through earlier hospital pages.
+// @version      6.32
+// @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -18,7 +18,7 @@
   const MAX_SECONDS = 600;  // skip anyone with more than this left in hospital (checked on the page AND against the API)
   const MAX_LOOKUPS = 10;   // only look up details for this many of the most promising people
   const MIN_RESULTS = 10;   // if fewer people than this match on the last hospital page, step back through earlier pages
-  const MAX_BACK_PAGES = 5; // ...but never go back more than this many pages
+  const MAX_JUMPS = 8;      // ...but never open more than this many extra pages (each jump goes twice as far back as the last)
   const MIN_INACTIVE_DAYS = 7; // (unused for now)
   const FLAG = 'ht_find_target';
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
@@ -529,28 +529,45 @@
   // (or swaps the page). Only the API check (faction / level / long timer) removes anyone.
   const kept = new Map(); // id -> target
 
-  // ---- stepping back through earlier hospital pages -----------------------------
+  // ---- jumping back through earlier hospital pages -------------------------------
   // The scan starts on the last hospital page (shortest times). If fewer than MIN_RESULTS people match
-  // there, it opens the previous page, then the one before, and so on, adding what it finds, until it has
-  // enough matches, reaches page 1, a page is entirely over the time limit (earlier pages only get longer),
-  // or it has gone back MAX_BACK_PAGES pages.
-  function prevLink(pg) {
+  // there, it jumps to an earlier page and adds what it finds there, and keeps going until it has enough.
+  // Each jump is twice as long as the one before (1 page back, then 2, then 4, 8 ...), so it reaches the
+  // pages with more people quickly, at the cost of skipping some pages in between (so some matches will be
+  // released a bit later). If a jump lands on a page where everyone is over the time limit, it comes back
+  // about halfway (and halves again) to cover the pages it skipped. It stops at enough matches, page 1,
+  // when there are no pages left in between, or after MAX_JUMPS extra pages.
+  function numberLinks() {
+    return [...document.querySelectorAll('[class*="pagination"] a, [class*="pager"] a')]
+      .filter((a) => /^\d+$/.test(a.textContent.trim()))
+      .map((a) => ({ a, n: +a.textContent.trim() }));
+  }
+  function arrowLink() {
     const links = [...document.querySelectorAll('[class*="pagination"] a, [class*="pager"] a')];
-    if (pg.cur !== null) {
-      const byNum = links.find((a) => a.textContent.trim() === String(pg.cur - 1));
-      if (byNum) return byNum;
-    }
     return links.find((a) => {
       const label = (a.title || '') + ' ' + (a.getAttribute('aria-label') || '') + ' ' + (a.textContent || '') + ' ' + (a.className || '');
       return /prev|‹|<|←/i.test(label) && !/disabled|inactive/i.test(label);
     }) || null;
+  }
+  // The pager link that gets closest to `target` while staying strictly between `low` and `high` (the pager may
+  // only show some page numbers). With allowArrow, falls back to the "previous" arrow (one page back).
+  function pickJump(pg, target, low, high, allowArrow) {
+    const best = numberLinks()
+      .filter((x) => x.n > low && x.n < high && x.n !== pg.cur)
+      .sort((x, y) => (Math.abs(x.n - target) - Math.abs(y.n - target)) || (y.n - x.n))[0];
+    if (best) return { link: best.a, expect: best.n };
+    if (allowArrow) {
+      const arrow = arrowLink();
+      if (arrow) return { link: arrow, expect: pg.cur !== null ? pg.cur - 1 : null };
+    }
+    return null;
   }
   // If Torn reloads the whole page when we click a page link, everything found so far is carried over
   // in sessionStorage so the search carries on (instead of starting again and looping).
   let walkSaveTimer = null;
   function saveWalkState() {
     try {
-      sessionStorage.setItem(WALK_KEY, JSON.stringify({ t: Date.now(), back: walk.back + 1, kept: [...kept.values()] }));
+      sessionStorage.setItem(WALK_KEY, JSON.stringify({ t: Date.now(), back: walk.back + 1, lo: walk.lo, hi: walk.hi, step: walk.step, kept: [...kept.values()] }));
       clearTimeout(walkSaveTimer);
       walkSaveTimer = setTimeout(() => { try { sessionStorage.removeItem(WALK_KEY); } catch (e) {} }, 10000);
     } catch (e) {}
@@ -574,6 +591,7 @@
   function walkDiag() {
     if (!walk) return '';
     return ' · pages searched: ' + (walk.back + 1) + (walk.reachedLast ? '' : ' (finding the last page)') +
+      (walk.hi !== null ? ' · earliest good page: ' + walk.hi : '') + (walk.lo > 0 ? ' · over the limit from page ' + walk.lo : '') +
       (walk.why ? ' · stopped: ' + walk.why : '') + (walk.stuck ? ' · stuck' : '');
   }
   function stepWalk(pg, sigNow) {
@@ -584,9 +602,15 @@
       const landed = walk.expect === null || pg.cur === null || pg.cur === walk.expect;
       if (changed && landed) { walk.moving = false; walk.back++; walk.stable = 0; walk.lastSig = sigNow; return; }
       if (Date.now() - walk.clickedAt > 8000) {
-        const l = walk.clicks < 3 ? prevLink(pg) : null;
+        let l = walk.clicks < 3 ? walk.lastLink : null;
+        if (l && !l.isConnected) {
+          // Torn redrew the pager without changing the list: find the same jump again.
+          const again = walk.mode === 'refine' ? pickJump(pg, walk.target, walk.lo, walk.hi, false)
+            : (walk.target !== null ? pickJump(pg, walk.target, 0, pg.cur !== null ? pg.cur : Infinity, true) : null);
+          l = again ? again.link : null;
+        }
         if (!l) { walk.stuck = true; walk.moving = false; return; }
-        walk.clicks++; walk.clickedAt = Date.now();
+        walk.clicks++; walk.clickedAt = Date.now(); walk.lastLink = l;
         saveWalkState();
         l.click();
       }
@@ -595,19 +619,49 @@
     if (walk.stable < 2) return; // wait until the page has finished loading
     walk.why = '';
     if (candidateCount >= MIN_RESULTS) { walk.why = MIN_RESULTS + ' matches found'; return; }
-    if (pg.cur !== null && pg.cur <= 1) { walk.why = 'reached the first page'; return; }
     if (shortestOnPage === null) return;
-    if (shortestOnPage > MAX_SECONDS) { walk.why = 'earlier pages are all over ' + Math.round(MAX_SECONDS / 60) + ' min'; return; }
-    if (walk.back >= MAX_BACK_PAGES) { walk.why = 'page limit (' + MAX_BACK_PAGES + ' earlier pages)'; return; }
-    const link = prevLink(pg);
-    if (!link) { walk.why = 'no earlier page link'; return; }
+    const here = pg.cur;
+    const good = shortestOnPage <= MAX_SECONDS; // does this page hold anyone within the time limit?
+    if (here !== null) {
+      // walk.hi = earliest page known to be good; walk.lo = latest page known to be over the limit.
+      if (good) walk.hi = walk.hi === null ? here : Math.min(walk.hi, here);
+      else walk.lo = Math.max(walk.lo, here);
+    }
+    const overMsg = 'earlier pages are all over ' + Math.round(MAX_SECONDS / 60) + ' min';
+    if (!good && (here === null || walk.hi === null)) { walk.why = overMsg; return; }
+    if (walk.back >= MAX_JUMPS) { walk.why = 'page limit (' + MAX_JUMPS + ' extra pages)'; return; }
+
+    let pick = null, target = null, mode = 'gallop';
+    if (here !== null && walk.lo > 0) {
+      // A jump overshot into pages that are all over the limit: look in between, about halfway.
+      mode = 'refine';
+      const gap = walk.hi - walk.lo;
+      if (gap <= 1) { walk.why = overMsg; return; }
+      target = walk.lo + Math.ceil(gap / 2);
+      pick = pickJump(pg, target, walk.lo, walk.hi, false);
+      if (!pick) { walk.why = 'no link to the pages in between'; return; }
+    } else {
+      if (here !== null && here <= 1) { walk.why = 'reached the first page'; return; }
+      if (here !== null) {
+        target = Math.max(1, here - walk.step);
+        pick = pickJump(pg, target, 0, here, true);
+      } else {
+        const arrow = arrowLink();
+        pick = arrow ? { link: arrow, expect: null } : null;
+      }
+      if (!pick) { walk.why = 'no earlier page link'; return; }
+      walk.step *= 2; // the next jump goes twice as far
+    }
     walk.moving = true;
     walk.sigBefore = sigNow;
-    walk.expect = pg.cur !== null ? pg.cur - 1 : null;
+    walk.expect = pick.expect;
+    walk.target = target;
+    walk.mode = mode;
+    walk.lastLink = pick.link;
     walk.clicks = 1;
     walk.clickedAt = Date.now();
     saveWalkState();
-    link.click();
+    pick.link.click();
   }
 
   function tick() {
@@ -674,11 +728,14 @@
     kept.clear();
     jumpRetries = 0;
     if (!resume) { try { sessionStorage.removeItem(WALK_KEY); } catch (e) {} } // a fresh search never inherits an old one
-    walk = { reachedLast: false, back: 0, moving: false, stuck: false, stable: 0, lastSig: '', sigBefore: '', expect: null, clicks: 0, clickedAt: 0, why: '' };
+    walk = { reachedLast: false, back: 0, moving: false, stuck: false, stable: 0, lastSig: '', sigBefore: '', expect: null, clicks: 0, clickedAt: 0, why: '', lo: 0, hi: null, step: 1, target: null, mode: '', lastLink: null };
     if (resume) {
       // Torn reloaded the page when we stepped back: carry on with everything found so far.
       resume.kept.forEach((t) => kept.set(t.id, t));
       walk.back = resume.back;
+      walk.lo = resume.lo || 0;
+      walk.hi = typeof resume.hi === 'number' ? resume.hi : null;
+      walk.step = resume.step || 1;
       walk.reachedLast = true;
     }
     liveStart = Date.now();
