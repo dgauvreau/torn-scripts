@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.41
+// @version      6.42
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.41"
+const VERSION="6.42"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -177,7 +177,8 @@ clearInterval(liveTimer)
 liveTimer=null
 getRows().forEach(r=>{r.style.outline=""})
 showIdle()}function rescan(){try{sessionStorage.removeItem(WALK_KEY)}catch(e){}sessionStorage.setItem(FLAG,"1")
-location.href=HOSPITAL_URL}const boxes={}
+panel.textContent="Rescanning\u2026"
+location.href=HOSPITAL_URL+"?rescan="+Date.now()}const boxes={}
 let countEl=null
 let dgEl=null
 let diagOpen=false

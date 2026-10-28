@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.41
+// @version      6.42
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.41';
+  const VERSION = '6.42';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -331,7 +331,9 @@
     // Reload the hospital list so the rows (and times) are fresh, then scan again.
     try { sessionStorage.removeItem(WALK_KEY); } catch (e) {}
     sessionStorage.setItem(FLAG, '1');
-    location.href = HOSPITAL_URL;
+    panel.textContent = 'Rescanning\u2026';
+    // Loading the exact same address can be ignored by the app, so add a changing parameter to force a real reload.
+    location.href = HOSPITAL_URL + '?rescan=' + Date.now();
   }
 
   const boxes = {};
