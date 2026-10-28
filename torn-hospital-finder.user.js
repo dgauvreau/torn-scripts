@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.35
+// @version      6.36
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.35';
+  const VERSION = '6.36';
 
   // ---- the Find Target button (in the page header) ---------------------------
   // One small pill in the header of the hospital page and of your targets list, next to the page title. Tap it to
@@ -35,15 +35,17 @@
   badge.type = 'button';
   badge.setAttribute('data-find-target-badge', '1');
   badge.title = 'Torn Find Target ' + VERSION;
-  const PILL = 'display:inline-block;vertical-align:middle;box-sizing:border-box;max-width:100%;margin:2px 8px;padding:4px 12px;' +
-    'background:#2a2a2a;border:1px solid #9d9;border-radius:12px;font:bold 12px sans-serif;cursor:pointer;color:#ddd;';
+  // Torn's own button class (torn-btn) gives it the site's colours, font and light/dark theme; the inline style
+  // only handles spacing.
+  badge.className = 'torn-btn';
+  const PILL = 'display:inline-block;vertical-align:middle;box-sizing:border-box;max-width:100%;margin:2px 8px;cursor:pointer;';
   badge.style.cssText = PILL;
   badge.textContent = '\ud83c\udfaf Find Target';
   let lastError = '';
   function badgeOk() { lastError = ''; badge.style.cssText = PILL; badge.textContent = '\ud83c\udfaf Find Target'; }
   function reportError(msg) {
     lastError = String(msg || 'unknown error').slice(0, 200);
-    badge.style.cssText = PILL + 'border-color:#f66;color:#f99;white-space:normal;text-align:left;';
+    badge.style.cssText = PILL + 'color:#f66;white-space:normal;height:auto;line-height:1.3;text-align:left;';
     badge.textContent = '\ud83c\udfaf ' + VERSION + ' \u26a0 ' + lastError + ' (tap to clear)';
   }
   badge.addEventListener('click', (e) => {
