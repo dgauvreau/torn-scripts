@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.34
+// @version      6.35
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,36 +24,54 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.34';
+  const VERSION = '6.35';
 
-  // ---- always-visible badge on the hospital page ----------------------------
-  // Created first, before anything else can fail: a small floating pill (bottom-right) that shows the script
-  // started, its version, starts a scan when tapped, and turns red with the error text if the script fails.
+  // ---- the Find Target button (in the page header) ---------------------------
+  // One small pill in the header of the hospital page and of your targets list, next to the page title. Tap it to
+  // start a scan (from the targets list it takes you to the hospital page first). It is created before anything
+  // else can fail, and turns red with the error text if the script breaks.
   let scanFn = null;
-  const badge = document.createElement('div');
+  const badge = document.createElement('button');
+  badge.type = 'button';
   badge.setAttribute('data-find-target-badge', '1');
-  badge.style.cssText =
-    'position:fixed;right:8px;bottom:70px;z-index:2147483000;max-width:80vw;padding:5px 10px;background:#1a1a1a;' +
-    'color:#fc6;border:1px solid #fc6;border-radius:12px;font:bold 12px sans-serif;cursor:pointer;';
-  badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' (starting\u2026)';
+  badge.title = 'Torn Find Target ' + VERSION;
+  const PILL = 'display:inline-block;vertical-align:middle;box-sizing:border-box;max-width:100%;margin:2px 8px;padding:4px 12px;' +
+    'background:#2a2a2a;border:1px solid #9d9;border-radius:12px;font:bold 12px sans-serif;cursor:pointer;color:#ddd;';
+  badge.style.cssText = PILL;
+  badge.textContent = '\ud83c\udfaf Find Target';
   let lastError = '';
-  function badgeOk() { lastError = ''; badge.style.color = '#9d9'; badge.style.borderColor = '#9d9'; badge.textContent = '\ud83c\udfaf Find Target ' + VERSION; }
+  function badgeOk() { lastError = ''; badge.style.cssText = PILL; badge.textContent = '\ud83c\udfaf Find Target'; }
   function reportError(msg) {
     lastError = String(msg || 'unknown error').slice(0, 200);
-    badge.style.color = '#f99'; badge.style.borderColor = '#f66';
-    badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' \u26a0 ' + lastError;
+    badge.style.cssText = PILL + 'border-color:#f66;color:#f99;white-space:normal;text-align:left;';
+    badge.textContent = '\ud83c\udfaf ' + VERSION + ' \u26a0 ' + lastError + ' (tap to clear)';
   }
   badge.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
     if (lastError) { badgeOk(); return; }
     if (scanFn) scanFn();
   });
+  function onTargetsPage() {
+    return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
+  }
   function ensureBadge() {
-    if (!onHospital || !document.body) return;
-    if (badge.parentNode !== document.body) document.body.appendChild(badge);
+    if (!onHospital && !onTargetsPage()) { if (badge.parentNode) badge.remove(); return; }
+    if (!document.body) return;
+    const title = document.querySelector('.content-title, [class*="content-title"]');
+    if (title) {
+      // inside the title bar, right after the heading, so it sits beside the page name
+      const heading = title.querySelector('h1, h2, h3, h4, [class*="title"]');
+      if (heading && heading.parentNode === title) { if (heading.nextElementSibling !== badge) heading.insertAdjacentElement('afterend', badge); }
+      else if (badge.parentNode !== title) title.insertBefore(badge, title.firstChild);
+    } else {
+      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer') || document.body;
+      if (badge.parentNode !== host) host.insertBefore(badge, host.firstChild);
+    }
   }
   window.addEventListener('error', (e) => { reportError(e && e.message); });
   ensureBadge();
+  document.addEventListener('DOMContentLoaded', ensureBadge);
+  window.addEventListener('load', ensureBadge);
   setInterval(ensureBadge, 1000);
 
   try {
@@ -117,35 +135,6 @@
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
   setInterval(ensureUI, 2000);
-
-  // ---- Find Target button on the targets page ------------------------------
-  // A button right under the title of your targets list. It takes you to the hospital page and starts the
-  // scan there (the same thing the Scan button in the hospital panel does).
-  const targetsBtn = document.createElement('button');
-  targetsBtn.type = 'button';
-  targetsBtn.setAttribute('data-find-target-btn', '1');
-  targetsBtn.style.cssText =
-    'display:inline-block;margin:6px 0;padding:6px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;' +
-    'border-radius:12px;font:bold 13px sans-serif;cursor:pointer;';
-  targetsBtn.textContent = '🎯 Find Target';
-  targetsBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); btn.click(); });
-  function onTargetsPage() {
-    return location.pathname.includes('page.php') && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search);
-  }
-  function ensureTargetsBtn() {
-    if (!onTargetsPage()) { if (targetsBtn.parentNode) targetsBtn.remove(); return; }
-    const title = document.querySelector('.content-title, [class*="content-title"]');
-    if (title && title.parentNode) {
-      if (targetsBtn.previousElementSibling !== title) title.insertAdjacentElement('afterend', targetsBtn);
-    } else {
-      const host = document.querySelector('#mainContainer .content-wrapper, .content-wrapper, #mainContainer');
-      if (host && targetsBtn.parentNode !== host) host.insertBefore(targetsBtn, host.firstChild);
-    }
-  }
-  ensureTargetsBtn();
-  document.addEventListener('DOMContentLoaded', ensureTargetsBtn);
-  window.addEventListener('load', ensureTargetsBtn);
-  setInterval(ensureTargetsBtn, 1500);
 
   // ---- parsing helpers ---------------------------------------------------
   function parseSeconds(text) {
