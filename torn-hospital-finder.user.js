@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.44
+// @version      6.45
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.44"
+const VERSION="6.45"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -39,6 +39,7 @@ const list=document.querySelector(".user-info-list-wrap")
 const host=list&&list.parentNode?list.parentNode:document.querySelector("#mainContainer, .content-wrapper")||document.body
 if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}window.addEventListener("error",e=>{const f=e&&e.filename||""
 if(/\.js(\?|#|$)/.test(f))return
+if(!e||!e.error||/ResizeObserver|Script error/i.test(e.message||""))return
 reportError(e&&e.message)})
 setInterval(ensureBadge,1e3)
 try{let API_KEY="###PDA-APIKEY###"
