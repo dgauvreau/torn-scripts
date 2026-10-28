@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.50
+// @version      6.51
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.50"
+const VERSION="6.51"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -196,19 +196,19 @@ if(shortestOnPage>MAX_SECONDS)return!(walk&&walk.reachedLast&&walk.stable>=2)
 return false}let dots=0
 function statusText(){if(!walk)return""
 const pg=pageInfo()
-const have=candidateCount>=MIN_RESULTS?candidateCount+" found":candidateCount+" of "+MIN_RESULTS+" found"
-if(walk.stuck)return"Stopped: couldn\u2019t open an earlier page \xb7 "+have
+const pagesTxt=walk.back+1+(walk.back===0?" page":" pages")+" searched"
+if(walk.stuck)return"Stopped: couldn\u2019t open an earlier page \xb7 "+pagesTxt
 const finished=!walk.moving&&walk.why
-if(finished)return"Finished: "+walk.why+" \xb7 "+have
+if(finished)return"Finished: "+walk.why+" \xb7 "+pagesTxt
 dots=(dots+1)%4
 const dd="...".slice(0,dots)
-if(walk.moving)return"Still searching, opening "+(walk.expect?"page "+walk.expect:"an earlier page")+dd+" \xb7 "+have
+if(walk.moving)return"Still searching, opening "+(walk.expect?"page "+walk.expect:"an earlier page")+dd+" \xb7 "+pagesTxt
 if(!walk.reachedLast)return"Opening the last page"+dd
-return"Still searching, checking "+(pg.cur!==null?"page "+pg.cur:"this page")+dd+" \xb7 "+have}function updateCount(){if(statusEl)statusEl.textContent=statusText()
+return"Still searching, checking "+(pg.cur!==null?"page "+pg.cur:"this page")+dd+" \xb7 "+pagesTxt}function updateCount(){if(statusEl)statusEl.textContent=statusText()
 if(!countEl)return
 const n=Object.keys(boxes).filter(k=>boxes[k].parentNode).length
-countEl.textContent=(n===0&&looksLoading()?"Loading\u2026":"Targets: "+n+(candidateCount>MAX_LOOKUPS?" (top "+MAX_LOOKUPS+" of "+candidateCount+")":""))+walkNote()}function fillBox(t){
-const box=boxes[t.id]
+countEl.textContent=n===0&&looksLoading()?"Loading\u2026":candidateCount<MIN_RESULTS?"Found "+n+" of "+MIN_RESULTS+" targets":candidateCount>n?"Found "+n+" of "+candidateCount+" targets":"Found "+n+" targets"
+}function fillBox(t){const box=boxes[t.id]
 if(!box||!box.parentNode)return
 const p=cache[t.id]
 if(excluded(p)){box.remove()

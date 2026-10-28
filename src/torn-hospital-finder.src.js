@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.50
+// @version      6.51
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.50';
+  const VERSION = '6.51';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -373,23 +373,24 @@
   function statusText() {
     if (!walk) return '';
     const pg = pageInfo();
-    const have = candidateCount >= MIN_RESULTS ? candidateCount + ' found' : candidateCount + ' of ' + MIN_RESULTS + ' found';
-    if (walk.stuck) return 'Stopped: couldn\u2019t open an earlier page \u00b7 ' + have;
+    const pagesTxt = (walk.back + 1) + (walk.back === 0 ? ' page' : ' pages') + ' searched';
+    if (walk.stuck) return 'Stopped: couldn\u2019t open an earlier page \u00b7 ' + pagesTxt;
     const finished = !walk.moving && walk.why;
-    if (finished) return 'Finished: ' + walk.why + ' \u00b7 ' + have;
+    if (finished) return 'Finished: ' + walk.why + ' \u00b7 ' + pagesTxt;
     dots = (dots + 1) % 4;
     const dd = '...'.slice(0, dots);
-    if (walk.moving) return 'Still searching, opening ' + (walk.expect ? 'page ' + walk.expect : 'an earlier page') + dd + ' \u00b7 ' + have;
+    if (walk.moving) return 'Still searching, opening ' + (walk.expect ? 'page ' + walk.expect : 'an earlier page') + dd + ' \u00b7 ' + pagesTxt;
     if (!walk.reachedLast) return 'Opening the last page' + dd;
-    return 'Still searching, checking ' + (pg.cur !== null ? 'page ' + pg.cur : 'this page') + dd + ' \u00b7 ' + have;
+    return 'Still searching, checking ' + (pg.cur !== null ? 'page ' + pg.cur : 'this page') + dd + ' \u00b7 ' + pagesTxt;
   }
 
   function updateCount() {
     if (statusEl) statusEl.textContent = statusText();
     if (!countEl) return;
     const n = Object.keys(boxes).filter((k) => boxes[k].parentNode).length;
-    countEl.textContent = ((n === 0 && looksLoading()) ? 'Loading…'
-      : 'Targets: ' + n + (candidateCount > MAX_LOOKUPS ? ' (top ' + MAX_LOOKUPS + ' of ' + candidateCount + ')' : '')) + walkNote();
+    countEl.textContent = (n === 0 && looksLoading()) ? 'Loading\u2026'
+      : (candidateCount < MIN_RESULTS) ? 'Found ' + n + ' of ' + MIN_RESULTS + ' targets'
+      : (candidateCount > n ? 'Found ' + n + ' of ' + candidateCount + ' targets' : 'Found ' + n + ' targets');
   }
 
   // Once a target's API details are in, drop them if they don't qualify
