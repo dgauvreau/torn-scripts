@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.47
+// @version      6.48
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.47"
+const VERSION="6.48"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -187,7 +187,7 @@ let countEl=null
 let dgEl=null
 let diagOpen=false
 function diagText(){if(diagOpen)return diag+" \xb7 my level: "+(myLevel===null?"unknown":myLevel)+" (tap to hide)"
-return pageNote+" \xb7 "+kept.size+" found \xb7 tap for details"}function looksLoading(){const pg=pageInfo()
+return pageNote+" \xb7 "+kept.size+" found \xb7 v"+VERSION+" \xb7 tap for details"}function looksLoading(){const pg=pageInfo()
 if(walk&&walk.moving)return true
 if(pg.cur!==null&&pg.max!==null&&pg.cur<pg.max&&!(walk&&walk.reachedLast))return true
 if(shortestOnPage===null)return Date.now()-liveStart<15e3

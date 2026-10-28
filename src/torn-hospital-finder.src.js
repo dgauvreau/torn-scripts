@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.47
+// @version      6.48
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.47';
+  const VERSION = '6.48';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -353,7 +353,7 @@
   let diagOpen = false;
   function diagText() {
     if (diagOpen) return diag + ' · my level: ' + (myLevel === null ? 'unknown' : myLevel) + ' (tap to hide)';
-    return pageNote + ' · ' + kept.size + ' found · tap for details';
+    return pageNote + ' · ' + kept.size + ' found · v' + VERSION + ' · tap for details';
   }
   // True while the page still doesn't look like the end of the hospital list
   // (pager not on the last page yet, no rows yet, or only long-time rows showing).
