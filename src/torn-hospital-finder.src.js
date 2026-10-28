@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.39
-// @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
+// @version      6.40
+// @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.39';
+  const VERSION = '6.40';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -37,7 +37,7 @@
   function badgeOk() { lastError = ''; badge.style.display = 'none'; }
   function reportError(msg) {
     lastError = String(msg || 'unknown error').slice(0, 200);
-    badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' \u26a0 ' + lastError + ' (tap to dismiss)';
+    badge.textContent = 'Find Targets ' + VERSION + ' \u26a0 ' + lastError + ' (tap to dismiss)';
     badge.style.display = 'block';
     ensureBadge();
   }
@@ -86,12 +86,14 @@
   function showIdle() {
     panel.textContent = '';
     panel.style.display = 'block';
-    const head = document.createElement('div');
-    const t = document.createElement('b');
-    t.textContent = '\ud83c\udfaf Find Target';
-    head.appendChild(t);
-    head.appendChild(smallBtn('Scan', () => btn.click()));
-    panel.appendChild(head);
+    // one plain button: the panel itself is just the button until a scan is running
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Find Targets';
+    b.style.cssText = 'display:block;width:100%;padding:6px 0;background:transparent;color:inherit;border:0;' +
+      'font:inherit;font-weight:bold;font-size:14px;cursor:pointer;';
+    b.addEventListener('click', (e) => { e.preventDefault(); btn.click(); });
+    panel.appendChild(b);
   }
   function ensureUI() {
     if (!onHospital) return; // the results panel only exists on the hospital page
