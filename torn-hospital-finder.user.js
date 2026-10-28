@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.55
+// @version      6.56
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.55"
+const VERSION="6.56"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -76,7 +76,31 @@ if(title){if(getComputedStyle(title).position==="static")title.style.position="r
 hdrBtn.style.cssText=HDR_BASE+"position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
 if(hdrBtn.parentNode!==title)title.appendChild(hdrBtn)}else{const host=document.querySelector("#mainContainer .content-wrapper, .content-wrapper, #mainContainer")||document.body
 hdrBtn.style.cssText=HDR_BASE+"display:block;margin:8px auto;"
-if(hdrBtn.parentNode!==host)host.insertBefore(hdrBtn,host.firstChild)}}ensureHdrBtn()
+if(hdrBtn.parentNode!==host)host.insertBefore(hdrBtn,host.firstChild)}}const tgtBtn=document.createElement("button")
+tgtBtn.type="button"
+tgtBtn.setAttribute("data-find-target-btn","targets")
+tgtBtn.textContent="Find Targets"
+tgtBtn.addEventListener("click",safe(e=>{e.preventDefault()
+e.stopPropagation()
+btn.click()}))
+function onTargetsPage(){return location.pathname.includes("page.php")&&/[?&]sid=list/.test(location.search)&&/[?&]type=targets/.test(location.search)}function findTargetsTitleBar(){
+const root=document.querySelector("#mainContainer")||document.body
+const heads=root.querySelectorAll('h1,h2,h3,h4,h5,[class*="title"],[class*="Title"]')
+for(let i=0;i<heads.length;i++){const h=heads[i]
+if(h.children.length>2||!/^\s*Targets List\s*$/i.test(h.textContent))continue
+const bar=h.closest(".content-title")||h.parentElement
+if(!bar)continue
+const r=bar.getBoundingClientRect()
+if(r.height>=24&&r.height<=140)return bar}return null}function ensureTargetsBtn(){if(!onTargetsPage()){if(tgtBtn.parentNode)tgtBtn.remove()
+return}const bar=findTargetsTitleBar()
+if(!bar)return
+if(getComputedStyle(bar).position==="static")bar.style.position="relative"
+tgtBtn.style.cssText=HDR_BASE+"position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
+if(tgtBtn.parentNode!==bar)bar.appendChild(tgtBtn)}ensureTargetsBtn()
+document.addEventListener("DOMContentLoaded",ensureTargetsBtn)
+window.addEventListener("load",ensureTargetsBtn)
+setInterval(ensureTargetsBtn,1e3)
+ensureHdrBtn()
 document.addEventListener("DOMContentLoaded",ensureHdrBtn)
 window.addEventListener("load",ensureHdrBtn)
 setInterval(ensureHdrBtn,1e3)
