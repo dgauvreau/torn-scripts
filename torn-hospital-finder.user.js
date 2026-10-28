@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.33
+// @version      6.34
 // @description  A Find Target panel on the hospital page (and a button at the top of your targets list that takes you there) scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,39 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.33';
+  const VERSION = '6.34';
+
+  // ---- always-visible badge on the hospital page ----------------------------
+  // Created first, before anything else can fail: a small floating pill (bottom-right) that shows the script
+  // started, its version, starts a scan when tapped, and turns red with the error text if the script fails.
+  let scanFn = null;
+  const badge = document.createElement('div');
+  badge.setAttribute('data-find-target-badge', '1');
+  badge.style.cssText =
+    'position:fixed;right:8px;bottom:70px;z-index:2147483000;max-width:80vw;padding:5px 10px;background:#1a1a1a;' +
+    'color:#fc6;border:1px solid #fc6;border-radius:12px;font:bold 12px sans-serif;cursor:pointer;';
+  badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' (starting\u2026)';
+  let lastError = '';
+  function badgeOk() { lastError = ''; badge.style.color = '#9d9'; badge.style.borderColor = '#9d9'; badge.textContent = '\ud83c\udfaf Find Target ' + VERSION; }
+  function reportError(msg) {
+    lastError = String(msg || 'unknown error').slice(0, 200);
+    badge.style.color = '#f99'; badge.style.borderColor = '#f66';
+    badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' \u26a0 ' + lastError;
+  }
+  badge.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (lastError) { badgeOk(); return; }
+    if (scanFn) scanFn();
+  });
+  function ensureBadge() {
+    if (!onHospital || !document.body) return;
+    if (badge.parentNode !== document.body) document.body.appendChild(badge);
+  }
+  window.addEventListener('error', (e) => { reportError(e && e.message); });
+  ensureBadge();
+  setInterval(ensureBadge, 1000);
+
+  try {
 
   // ---- API key -----------------------------------------------------------
   // Torn PDA replaces the placeholder below with your own key.
@@ -85,39 +117,6 @@
   document.addEventListener('DOMContentLoaded', ensureUI);
   window.addEventListener('load', ensureUI);
   setInterval(ensureUI, 2000);
-
-  // ---- always-visible badge on the hospital page ----------------------------
-  // A small floating pill (bottom-right) that proves the script is running, shows its version, starts a scan
-  // when tapped, and turns red with the error text if anything in the script fails.
-  const badge = document.createElement('div');
-  badge.setAttribute('data-find-target-badge', '1');
-  badge.style.cssText =
-    'position:fixed;right:8px;bottom:70px;z-index:2147483000;max-width:80vw;padding:5px 10px;background:#1a1a1a;' +
-    'color:#9d9;border:1px solid #9d9;border-radius:12px;font:bold 12px sans-serif;cursor:pointer;';
-  badge.textContent = '\ud83c\udfaf Find Target ' + VERSION;
-  let lastError = '';
-  function reportError(msg) {
-    lastError = String(msg || 'unknown error').slice(0, 200);
-    badge.style.color = '#f99'; badge.style.borderColor = '#f66';
-    badge.textContent = '\ud83c\udfaf Find Target ' + VERSION + ' \u26a0 ' + lastError;
-  }
-  badge.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    if (lastError) { lastError = ''; badge.style.color = '#9d9'; badge.style.borderColor = '#9d9'; badge.textContent = '\ud83c\udfaf Find Target ' + VERSION; }
-    btn.click();
-  });
-  function ensureBadge() {
-    if (!onHospital || !document.body) return;
-    if (badge.parentNode !== document.body) document.body.appendChild(badge);
-  }
-  window.addEventListener('error', (e) => {
-    const f = (e && e.filename) || '';
-    if (!f || /find|loader|userscript/i.test(f) || !/^https?:/.test(f)) reportError(e && e.message);
-  });
-  ensureBadge();
-  document.addEventListener('DOMContentLoaded', ensureBadge);
-  window.addEventListener('load', ensureBadge);
-  setInterval(ensureBadge, 2000);
 
   // ---- Find Target button on the targets page ------------------------------
   // A button right under the title of your targets list. It takes you to the hospital page and starts the
@@ -847,5 +846,9 @@
       sessionStorage.removeItem(FLAG);
       jumpAndScan();
     }
+  } catch (err) { reportError(err && err.message); }
+
+  scanFn = () => btn.click();
+  if (!lastError) badgeOk();
   } catch (err) { reportError(err && err.message); }
 })();
