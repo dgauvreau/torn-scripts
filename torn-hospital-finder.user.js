@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.45
+// @version      6.46
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.45"
+const VERSION="6.46"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -37,10 +37,11 @@ badgeOk()})
 function ensureBadge(){if(!onHospital||!lastError||!document.body)return
 const list=document.querySelector(".user-info-list-wrap")
 const host=list&&list.parentNode?list.parentNode:document.querySelector("#mainContainer, .content-wrapper")||document.body
-if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}window.addEventListener("error",e=>{const f=e&&e.filename||""
-if(/\.js(\?|#|$)/.test(f))return
-if(!e||!e.error||/ResizeObserver|Script error/i.test(e.message||""))return
-reportError(e&&e.message)})
+if(badge.parentNode!==host)host.insertBefore(badge,list&&list.parentNode===host?list:host.firstChild)}const safe=fn=>function(){try{const r=fn.apply(this,arguments)
+if(r&&typeof r.catch==="function")r.catch(e=>reportError(e&&e.message))
+return r}catch(e){reportError(e&&e.message)}}
+const setTimeout=(f,t)=>window.setTimeout(typeof f==="function"?safe(f):f,t)
+const setInterval=(f,t)=>window.setInterval(typeof f==="function"?safe(f):f,t)
 setInterval(ensureBadge,1e3)
 try{let API_KEY="###PDA-APIKEY###"
 if(!API_KEY||API_KEY.startsWith("###")){try{API_KEY=localStorage.getItem("ht_api_key")||""}catch(e){API_KEY=""}}function ensureKey(){if(API_KEY)return true
@@ -56,8 +57,8 @@ const b=document.createElement("button")
 b.type="button"
 b.textContent="Find Targets"
 b.style.cssText="display:block;width:100%;padding:6px 0;background:transparent;color:inherit;border:0;"+"font:inherit;font-weight:bold;font-size:14px;cursor:pointer;"
-b.addEventListener("click",e=>{e.preventDefault()
-btn.click()})
+b.addEventListener("click",safe(e=>{e.preventDefault()
+btn.click()}))
 panel.appendChild(b)}function ensureUI(){if(!onHospital)return
 const list=document.querySelector(".user-info-list-wrap")
 let parent=null,before=null
@@ -172,8 +173,8 @@ cache[id]=j.error?"error":j}catch(e){cache[id]="error"}delete inflight[id]})()
 return inflight[id]}function smallBtn(label,fn){const b=document.createElement("button")
 b.textContent=label
 b.style.cssText="margin:0 8px 0 0;padding:6px 14px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);"+"border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer;"
-b.addEventListener("click",e=>{e.stopPropagation()
-fn()})
+b.addEventListener("click",safe(e=>{e.stopPropagation()
+fn()}))
 return b}function closePanel(){scanning=false
 walk=null
 clearInterval(liveTimer)
@@ -240,11 +241,11 @@ const mkb=(txt,d)=>{const b=document.createElement("button")
 b.type="button"
 b.textContent=txt
 b.style.cssText="width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;"+"border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;"
-b.addEventListener("click",e=>{e.preventDefault()
+b.addEventListener("click",safe(e=>{e.preventDefault()
 e.stopPropagation()
 set(get()+d)
 refresh()
-commit()})
+commit()}))
 return b}
 g.appendChild(nm)
 g.appendChild(mkb("\u2212",-1))
@@ -455,11 +456,11 @@ const onLast=pg.cur!==null&&pg.max!==null&&pg.cur>=pg.max
 const last=findLastPageLink()
 if(last&&!onLast&&!/active|current|selected/i.test(last.className)){sessionStorage.setItem(FLAG,"1")
 last.click()
-setTimeout(()=>sessionStorage.removeItem(FLAG),8e3)}startLive()}btn.addEventListener("click",()=>{if(!onHospital){sessionStorage.setItem(FLAG,"1")
+setTimeout(()=>sessionStorage.removeItem(FLAG),8e3)}startLive()}btn.addEventListener("click",safe(()=>{if(!onHospital){sessionStorage.setItem(FLAG,"1")
 location.href=HOSPITAL_URL
-return}jumpAndScan()})
+return}return jumpAndScan()}))
 try{const freshStart=onHospital&&!!sessionStorage.getItem(FLAG)
 const resumed=onHospital&&!freshStart?takeWalkState():null
 if(resumed){startLive(resumed)}else if(freshStart){sessionStorage.removeItem(FLAG)
-jumpAndScan()}}catch(err){reportError(err&&err.message)}}catch(err){reportError(err&&err.message)}})()
+jumpAndScan().catch(e=>reportError(e&&e.message))}}catch(err){reportError(err&&err.message)}}catch(err){reportError(err&&err.message)}})()
 

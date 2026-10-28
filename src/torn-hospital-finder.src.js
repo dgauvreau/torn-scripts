@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.45
+// @version      6.46
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.45';
+  const VERSION = '6.46';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -48,14 +48,18 @@
     const host = list && list.parentNode ? list.parentNode : (document.querySelector('#mainContainer, .content-wrapper') || document.body);
     if (badge.parentNode !== host) host.insertBefore(badge, list && list.parentNode === host ? list : host.firstChild);
   }
-  // Only our own errors are shown: Torn's own scripts throw errors on the page now and then (they come from a
-  // .js file on torn.com), and those are none of our business.
-  window.addEventListener('error', (e) => {
-    const f = (e && e.filename) || '';
-    if (/\.js(\?|#|$)/.test(f)) return;
-    if (!e || !e.error || /ResizeObserver|Script error/i.test(e.message || '')) return; // browser notices, not real errors
-    reportError(e && e.message);
-  });
+  // Only errors thrown by this script's own code are shown. Anything running from our timers, clicks or scans is
+  // wrapped so a failure lands here; nothing is picked up from the rest of the page (Torn's own scripts and the
+  // browser raise their own, unrelated errors all the time).
+  const safe = (fn) => function () {
+    try {
+      const r = fn.apply(this, arguments);
+      if (r && typeof r.catch === 'function') r.catch((e) => reportError(e && e.message));
+      return r;
+    } catch (e) { reportError(e && e.message); }
+  };
+  const setTimeout = (f, t) => window.setTimeout(typeof f === 'function' ? safe(f) : f, t);
+  const setInterval = (f, t) => window.setInterval(typeof f === 'function' ? safe(f) : f, t);
   setInterval(ensureBadge, 1000);
 
   try {
@@ -99,7 +103,7 @@
     b.textContent = 'Find Targets';
     b.style.cssText = 'display:block;width:100%;padding:6px 0;background:transparent;color:inherit;border:0;' +
       'font:inherit;font-weight:bold;font-size:14px;cursor:pointer;';
-    b.addEventListener('click', (e) => { e.preventDefault(); btn.click(); });
+    b.addEventListener('click', safe((e) => { e.preventDefault(); btn.click(); }));
     panel.appendChild(b);
   }
   function ensureUI() {
@@ -322,7 +326,7 @@
     b.style.cssText =
       'margin:0 8px 0 0;padding:6px 14px;background:rgba(128,128,128,.18);color:inherit;border:1px solid rgba(128,128,128,.5);' +
       'border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer;';
-    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    b.addEventListener('click', safe((e) => { e.stopPropagation(); fn(); }));
     return b;
   }
 
@@ -437,7 +441,7 @@
           b.type = 'button'; b.textContent = txt;
           b.style.cssText = 'width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;' +
             'border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;';
-          b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); set(get() + d); refresh(); commit(); });
+          b.addEventListener('click', safe((e) => { e.preventDefault(); e.stopPropagation(); set(get() + d); refresh(); commit(); }));
           return b;
         };
         g.appendChild(nm); g.appendChild(mkb('\u2212', -1)); g.appendChild(val); g.appendChild(mkb('+', 1));
@@ -797,14 +801,14 @@
     startLive();
   }
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', safe(() => {
     if (!onHospital) {
       sessionStorage.setItem(FLAG, '1');
       location.href = HOSPITAL_URL;
       return;
     }
-    jumpAndScan();
-  });
+    return jumpAndScan();
+  }));
 
   // Arriving from the Find Target / Rescan button (flag set) always starts a fresh search; arriving without it
   // right after stepping back a page means Torn reloaded the page, so carry on where we were.
@@ -815,7 +819,7 @@
       startLive(resumed);
     } else if (freshStart) {
       sessionStorage.removeItem(FLAG);
-      jumpAndScan();
+      jumpAndScan().catch((e) => reportError(e && e.message));
     }
   } catch (err) { reportError(err && err.message); }
 
