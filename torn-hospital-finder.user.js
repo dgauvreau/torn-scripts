@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.49
+// @version      6.50
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.49"
+const VERSION="6.50"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -184,6 +184,7 @@ showIdle()}function rescan(){try{sessionStorage.removeItem(WALK_KEY)}catch(e){}s
 panel.textContent="Rescanning\u2026"
 location.href=HOSPITAL_URL+"?rescan="+Date.now()}const boxes={}
 let countEl=null
+let statusEl=null
 let dgEl=null
 let diagOpen=false
 function diagText(){if(diagOpen)return diag+" \xb7 my level: "+(myLevel===null?"unknown":myLevel)+" (tap to hide)"
@@ -192,7 +193,19 @@ if(walk&&walk.moving)return true
 if(pg.cur!==null&&pg.max!==null&&pg.cur<pg.max&&!(walk&&walk.reachedLast))return true
 if(shortestOnPage===null)return Date.now()-liveStart<15e3
 if(shortestOnPage>MAX_SECONDS)return!(walk&&walk.reachedLast&&walk.stable>=2)
-return false}function updateCount(){if(!countEl)return
+return false}let dots=0
+function statusText(){if(!walk)return""
+const pg=pageInfo()
+const have=candidateCount>=MIN_RESULTS?candidateCount+" found":candidateCount+" of "+MIN_RESULTS+" found"
+if(walk.stuck)return"Stopped: couldn\u2019t open an earlier page \xb7 "+have
+const finished=!walk.moving&&walk.why
+if(finished)return"Finished: "+walk.why+" \xb7 "+have
+dots=(dots+1)%4
+const dd="...".slice(0,dots)
+if(walk.moving)return"Still searching, opening "+(walk.expect?"page "+walk.expect:"an earlier page")+dd+" \xb7 "+have
+if(!walk.reachedLast)return"Opening the last page"+dd
+return"Still searching, checking "+(pg.cur!==null?"page "+pg.cur:"this page")+dd+" \xb7 "+have}function updateCount(){if(statusEl)statusEl.textContent=statusText()
+if(!countEl)return
 const n=Object.keys(boxes).filter(k=>boxes[k].parentNode).length
 countEl.textContent=(n===0&&looksLoading()?"Loading\u2026":"Targets: "+n+(candidateCount>MAX_LOOKUPS?" (top "+MAX_LOOKUPS+" of "+candidateCount+")":""))+walkNote()}function fillBox(t){
 const box=boxes[t.id]
@@ -213,6 +226,9 @@ const head=document.createElement("div")
 countEl=document.createElement("b")
 countEl.style.cssText="display:block;font-size:15px;margin-bottom:8px;"
 head.appendChild(countEl)
+statusEl=document.createElement("div")
+statusEl.style.cssText="opacity:.85;font-size:13px;margin:-4px 0 8px;"
+head.appendChild(statusEl)
 head.appendChild(smallBtn("Rescan",rescan))
 head.appendChild(smallBtn("Stop",closePanel))
 panel.appendChild(head)

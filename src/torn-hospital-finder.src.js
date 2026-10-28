@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.49
+// @version      6.50
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.49';
+  const VERSION = '6.50';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -349,6 +349,7 @@
 
   const boxes = {};
   let countEl = null;
+  let statusEl = null;
   let dgEl = null;
   let diagOpen = false;
   function diagText() {
@@ -367,7 +368,24 @@
     return false;
   }
 
+  // A plain-words progress line: what the scan is doing right now, or why it finished.
+  let dots = 0;
+  function statusText() {
+    if (!walk) return '';
+    const pg = pageInfo();
+    const have = candidateCount >= MIN_RESULTS ? candidateCount + ' found' : candidateCount + ' of ' + MIN_RESULTS + ' found';
+    if (walk.stuck) return 'Stopped: couldn\u2019t open an earlier page \u00b7 ' + have;
+    const finished = !walk.moving && walk.why;
+    if (finished) return 'Finished: ' + walk.why + ' \u00b7 ' + have;
+    dots = (dots + 1) % 4;
+    const dd = '...'.slice(0, dots);
+    if (walk.moving) return 'Still searching, opening ' + (walk.expect ? 'page ' + walk.expect : 'an earlier page') + dd + ' \u00b7 ' + have;
+    if (!walk.reachedLast) return 'Opening the last page' + dd;
+    return 'Still searching, checking ' + (pg.cur !== null ? 'page ' + pg.cur : 'this page') + dd + ' \u00b7 ' + have;
+  }
+
   function updateCount() {
+    if (statusEl) statusEl.textContent = statusText();
     if (!countEl) return;
     const n = Object.keys(boxes).filter((k) => boxes[k].parentNode).length;
     countEl.textContent = ((n === 0 && looksLoading()) ? 'Loading…'
@@ -405,6 +423,9 @@
     countEl = document.createElement('b');
     countEl.style.cssText = 'display:block;font-size:15px;margin-bottom:8px;';
     head.appendChild(countEl);
+    statusEl = document.createElement('div');
+    statusEl.style.cssText = 'opacity:.85;font-size:13px;margin:-4px 0 8px;';
+    head.appendChild(statusEl);
     head.appendChild(smallBtn('Rescan', rescan));
     head.appendChild(smallBtn('Stop', closePanel));
     panel.appendChild(head);
