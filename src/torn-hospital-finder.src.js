@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.48
+// @version      6.49
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.48';
+  const VERSION = '6.49';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -624,9 +624,9 @@
       }
       return;
     }
-    // The pager can still show a last page that no longer exists (people keep leaving hospital, so the list
-    // shrinks), which comes up with no rows at all. After a few seconds of that, step back one page.
-    if (getRows().length === 0) {
+    // The pager can still show a last page that has almost nothing left on it (people keep leaving hospital, so the
+    // list shrinks): no rows at all, or only rows whose time can't be read. After a few seconds of that, step back one page.
+    if (getRows().length === 0 || shortestOnPage === null) {
       walk.empty = (walk.empty || 0) + 1;
       if (walk.empty >= 4 && walk.back < MAX_JUMPS) {
         const cur = pg.cur;
