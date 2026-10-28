@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.46
+// @version      6.47
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.46"
+const VERSION="6.47"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -359,7 +359,22 @@ return}walk.clicks++
 walk.clickedAt=Date.now()
 walk.lastLink=l
 saveWalkState()
-l.click()}return}if(walk.stable<2)return
+l.click()}return}if(getRows().length===0){walk.empty=(walk.empty||0)+1
+if(walk.empty>=4&&walk.back<MAX_JUMPS){const cur=pg.cur
+const pick=pickJump(pg,cur!==null?cur-1:null,0,cur!==null?cur:Infinity,true)
+if(pick){walk.empty=0
+walk.why=""
+walk.moving=true
+walk.sigBefore=sigNow
+walk.expect=pick.expect
+walk.target=null
+walk.mode="gallop"
+walk.lastLink=pick.link
+walk.clicks=1
+walk.clickedAt=Date.now()
+saveWalkState()
+pick.link.click()}}return}walk.empty=0
+if(walk.stable<2)return
 walk.why=""
 if(candidateCount>=MIN_RESULTS){walk.why=MIN_RESULTS+" matches found"
 return}if(shortestOnPage===null)return
