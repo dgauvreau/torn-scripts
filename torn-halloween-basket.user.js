@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Halloween Basket
 // @namespace    torn-halloween-basket
-// @version      2.0
-// @description  During the Halloween season, shows an informational banner at the very top of every Torn page: a link to your basket, its level (tier name and number) and how many treats it holds. Torn only shows the treat count inside the basket on the Items page, so the numbers are read there and remembered; tap the banner to open the basket and refresh them. No API key needed.
+// @version      3.0
+// @description  During the Halloween season, shows an informational banner at the very top of every Torn page with your basket's level (tier name and number) and how many treats it holds. The numbers are read from the official API (your inventory), so nothing has to be opened: tap the banner to refresh in place, or use the arrow to open the basket. If the API can't supply the treat count, or there is no key, the Items-page reading is used as a fallback.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -121,6 +121,79 @@
     opening = false;
   }
 
+  // ---- API ---------------------------------------------------------------
+  // Own key slot only (never another script's key). Torn PDA fills the placeholder with your key. Needs inventory access.
+  const OWN_SLOT = 'hb_key';
+  const PDA_KEY = '###PDA-APIKEY###';
+  const pdaKey = (PDA_KEY && !PDA_KEY.startsWith('###')) ? PDA_KEY : '';
+  function readKey() { try { return localStorage.getItem(OWN_SLOT) || ''; } catch (e) { return ''; } }
+  const getKey = () => readKey() || pdaKey;
+  const API_REFRESH_SEC = 300;      // don't re-read the API more often than this unless tapped
+  let apiBusy = false, apiNote = '';
+
+  async function apiGet(path, params) {
+    const q = new URLSearchParams(Object.assign({}, params, { key: getKey(), comment: 'TornHalloweenBasket' }));
+    const r = await fetch('https://api.torn.com/v2/' + path + '?' + q.toString());
+    const j = await r.json();
+    if (j && j.error) { const e = new Error(j.error.error || 'API error'); e.code = j.error.code; throw e; }
+    return j;
+  }
+  // The response layout isn't assumed: walk it for objects named like the basket, and for a treat number inside one.
+  function walk(node, fn, depth) {
+    if (!node || typeof node !== 'object' || (depth || 0) > 6) return;
+    fn(node);
+    (Array.isArray(node) ? node : Object.keys(node).map((k) => node[k])).forEach((c) => walk(c, fn, (depth || 0) + 1));
+  }
+  function treatsIn(obj) {
+    let found = null;
+    walk(obj, (o) => {
+      if (found !== null || Array.isArray(o)) return;
+      Object.keys(o).forEach((k) => {
+        if (found === null && /treat/i.test(k) && typeof o[k] === 'number') found = o[k];
+      });
+    });
+    return found;
+  }
+  function parseBasket(j) {
+    let basket = null;
+    walk(j, (o) => {
+      if (basket || Array.isArray(o)) return;
+      if (typeof o.name === 'string' && BASKET_RE.test(o.name)) basket = o;
+    });
+    return basket;
+  }
+  async function refreshFromApi(force) {
+    if (apiBusy || !getKey()) return false;
+    const snap = readSnapshot() || {};
+    if (!force && snap.apiTs && Date.now() / 1000 - snap.apiTs < API_REFRESH_SEC) return false;
+    apiBusy = true; apiNote = '';
+    let ok = false;
+    try {
+      let j;
+      try { j = await apiGet('user/inventory', { cat: 'Special', limit: 100 }); }
+      catch (e) { if (e.code === 2 || e.code === 16) throw e; j = await apiGet('user/inventory', { limit: 100 }); }
+      const b = parseBasket(j);
+      const next = readSnapshot() || {};
+      if (!b) {
+        apiNote = 'no basket in inventory';
+      } else {
+        const tm = TIER_RE.exec(b.name);
+        if (tm) next.tier = TIERS.findIndex((t) => t.toLowerCase() === tm[1].toLowerCase()) + 1;
+        const t = treatsIn(b);
+        if (t !== null) { next.treats = t; next.apiTreats = true; }
+        else if (!next.apiTreats) apiNote = 'API has no treat count; open the basket once to read it';
+        next.ts = next.apiTs = Math.floor(Date.now() / 1000);
+        saveSnapshot(next);
+        ok = true;
+      }
+    } catch (e) {
+      apiNote = e.code === 2 ? 'API key rejected' : e.code === 16 ? 'API key lacks inventory access' : e.code === 5 ? 'API rate limited' : 'API error: ' + e.message;
+    }
+    apiBusy = false;
+    render();
+    return ok;
+  }
+
   // ---- reading the basket --------------------------------------------------
   // Level comes from the basket's name ("Halloween Basket : Freaky" -> Freaky, level 3). The treat count is
   // shown inside the basket's own panel, so it is read from the opened row, falling back to the open panel.
@@ -152,27 +225,37 @@
     const panel = li.querySelector('.show-item-info, [class*="show-item-info"], [class*="item-info"]');
     let treats = findTreats((li.textContent || '') + ' ' + (panel ? panel.textContent || '' : ''));
     if (treats === null && /\bopened\b/.test(li.className)) treats = findTreats((document.body && document.body.textContent) || '');
-    if (treats !== null && snap.treats !== treats) { snap.treats = treats; changed = true; }
+    if (treats !== null && !snap.apiTreats && snap.treats !== treats) { snap.treats = treats; changed = true; }
     if (changed || !snap.ts) { snap.ts = Math.floor(Date.now() / 1000); saveSnapshot(snap); render(); }
     else if (tm || treats !== null) { snap.ts = Math.floor(Date.now() / 1000); saveSnapshot(snap); }
   }
 
   // ---- banner at the very top ------------------------------------------------
-  const banner = document.createElement('a');
-  banner.href = ITEMS_URL;
+  const banner = document.createElement('div');
   banner.setAttribute('data-halloween-basket-banner', '1');
   banner.style.cssText =
     'display:block;box-sizing:border-box;margin:4px auto;padding:6px 12px;max-width:92%;background:#2b1a00;color:#ffd9a0;' +
-    'border:1px solid #f80;border-radius:14px;font:bold 13px sans-serif;text-align:center;text-decoration:none;cursor:pointer;';
+    'border:1px solid #f80;border-radius:14px;font:bold 13px sans-serif;text-align:center;cursor:pointer;';
+  const bannerText = document.createElement('span');
+  const openLink = document.createElement('a');
+  openLink.href = ITEMS_URL;
+  openLink.textContent = ' \u2197';
+  openLink.title = 'Open the basket on the Items page';
+  openLink.style.cssText = 'color:#ffd9a0;text-decoration:none;padding:0 6px;';
+  banner.appendChild(bannerText);
+  banner.appendChild(openLink);
+  // Tap the banner: refresh from the API without leaving the page. Without a key, fall back to opening the basket.
   banner.addEventListener('click', (e) => {
-    e.preventDefault();
-    if (onItems) {
-      try { location.hash = '#special-items'; } catch (x) {}
-      openBasket();
-    } else {
-      try { sessionStorage.setItem(FLAG, '1'); } catch (x) {}
-      location.href = ITEMS_URL;
+    if (e.target === openLink) {
+      e.preventDefault();
+      if (onItems) { try { location.hash = '#special-items'; } catch (x) {} openBasket(); }
+      else { try { sessionStorage.setItem(FLAG, '1'); } catch (x) {} location.href = ITEMS_URL; }
+      return;
     }
+    e.preventDefault();
+    if (getKey()) refreshFromApi(true);
+    else if (onItems) openBasket();
+    else { try { sessionStorage.setItem(FLAG, '1'); } catch (x) {} location.href = ITEMS_URL; }
   });
   function ago(ts) {
     const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
@@ -187,12 +270,14 @@
     if (snap && snap.tier) parts.push('Level ' + snap.tier + ' (' + TIERS[snap.tier - 1] + ')');
     if (snap && typeof snap.treats === 'number') parts.push(snap.treats.toLocaleString() + ' treat' + (snap.treats === 1 ? '' : 's'));
     let text = parts.join(' · ');
-    if (!snap || (!snap.tier && typeof snap.treats !== 'number')) text += ' · tap to open it and read your level and treats';
+    if (!snap || (!snap.tier && typeof snap.treats !== 'number')) text += getKey() ? ' · tap to read your level and treats' : ' · tap to open it and read your level and treats';
     else {
-      if (typeof snap.treats !== 'number') text += ' · treats: tap to read';
+      if (typeof snap.treats !== 'number') text += ' · treats: ' + (getKey() ? 'not in API, open the basket once' : 'tap to read');
       if (snap.ts) text += ' · ' + ago(snap.ts);
     }
-    if (banner.textContent !== text) banner.textContent = text;
+    if (apiBusy) text += ' · \u2026';
+    else if (apiNote && !(snap && snap.apiTs && !/key|limited|error/i.test(apiNote))) text += ' · ' + apiNote;
+    if (bannerText.textContent !== text) bannerText.textContent = text;
   }
   function ensureBanner() {
     const host = document.body || document.documentElement;
@@ -204,6 +289,8 @@
   document.addEventListener('DOMContentLoaded', ensureBanner);
   window.addEventListener('load', ensureBanner);
   setInterval(ensureBanner, 2000);
+  refreshFromApi(false);
+  setInterval(() => { if (document.visibilityState === 'visible') refreshFromApi(false); }, 60000);
   // On the Items page, keep reading the basket as it loads and as it opens.
   if (onItems) setInterval(scanBasket, 1500);
 
