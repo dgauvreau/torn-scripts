@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.9
+// @version      2.0
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -103,9 +103,46 @@
   ];
   const OFFSET_RE = /\b(?:UTC|GMT|TCT)\s*([+\-\u2212])\s*(\d{1,2})(?::?(\d{2}))?(?!\d)/i;
 
+  // The thread's own format: "When 00:00 happens in Torn it is 5pm/17:00 for me" (the local time at Torn midnight).
+  // That time IS the offset from UTC (17:00 -> UTC-7). With "summer ... winter" answers, the one that applies now is used.
+  function parseClock(text) {
+    const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=|:)\s*(?=\d)|\b(?:midnight|00(?::00)?|24:00|12\s*am)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=)\s*(?=\d)/i.exec(text);
+    if (!lead) return null;
+    const rest = text.slice(lead.index + lead[0].length, lead.index + lead[0].length + 220);
+    const tre = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/gi;
+    const times = [];
+    let x;
+    while ((x = tre.exec(rest)) && times.length < 6) {
+      let h = +x[1]; const mi = +(x[2] || 0); const ap = (x[3] || '').toLowerCase().replace(/\./g, '');
+      if (h > 24 || mi > 59) continue;
+      if (ap === 'pm' && h < 12) h += 12; else if (ap === 'am' && h === 12) h = 0;
+      times.push({ idx: x.index, end: x.index + x[0].length, mins: h * 60 + mi });
+    }
+    if (!times.length) return null;
+    const seasons = [];
+    const sre = /\b(summer|winter|dst|daylight|standard)\b/gi;
+    while ((x = sre.exec(rest))) seasons.push({ idx: x.index, summer: /summer|dst|daylight/i.test(x[1]) });
+    let pick = times[0];
+    if (seasons.length > 1) {
+      const m = new Date().getUTCMonth() + 1;
+      const wantSummer = m >= 4 && m <= 10;
+      const hit = times.find((t) => {
+        const s2 = seasons.find((sx) => sx.idx >= t.end && sx.idx - t.end < 45);
+        return s2 && s2.summer === wantSummer;
+      });
+      if (hit) pick = hit;
+    }
+    let off = pick.mins === 1440 ? 0 : pick.mins;
+    if (off > 14 * 60) off -= 1440;
+    const sign = off < 0 ? '-' : '+', a = Math.abs(off);
+    return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, lead.index), lead.index + lead[0].length + 60).replace(/\s+/g, ' ').trim() };
+  }
+
   // Best reading of a piece of text: the first time zone it mentions (earliest wins).
   function parseZone(text) {
     if (!text) return null;
+    const clock = parseClock(text);
+    if (clock) return clock;
     const hits = [];
     const m = OFFSET_RE.exec(text);
     if (m) {
