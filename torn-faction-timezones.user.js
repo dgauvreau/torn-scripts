@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.8
+// @version      1.9
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -217,6 +217,41 @@
   try { const c = JSON.parse(readSlot(CACHE_SLOT) || 'null'); if (c && c.members) data = c; } catch (e) { data = null; }
   let tid = readSlot(THREAD_SLOT);
 
+  // Faction forum threads are not served by the API (it answers "Incorrect ID"), so read the posts shown on the page instead.
+  // Each page you open adds its posters to what is already known for this thread.
+  function scrapePage(base) {
+    const members = (base && base.members) || {};
+    const done = [];
+    let found = 0;
+    const links = Array.prototype.slice.call(document.querySelectorAll('a[href*="profiles.php?XID="]'));
+    links.forEach((a) => {
+      const m = /XID=(\d+)/.exec(a.getAttribute('href') || '');
+      if (!m) return;
+      const id = m[1];
+      // climb until the block holds more text than the name and still only one poster
+      let box = a.parentElement, best = null;
+      for (let i = 0; i < 8 && box && box !== document.body; i++) {
+        const ids = {};
+        Array.prototype.forEach.call(box.querySelectorAll('a[href*="profiles.php?XID="]'), (x) => { const mm = /XID=(\d+)/.exec(x.getAttribute('href') || ''); if (mm) ids[mm[1]] = 1; });
+        if (Object.keys(ids).length > 1) break;
+        if ((box.textContent || '').trim().length > 80) best = box;
+        box = box.parentElement;
+      }
+      if (!best || done.indexOf(best) >= 0) return;
+      done.push(best);
+      const clone = best.cloneNode(true);
+      Array.prototype.forEach.call(clone.querySelectorAll('blockquote, [class*="quote"], [class*="Quote"], script, style'), (n) => n.remove());
+      const text = (clone.textContent || '').replace(/\u00a0/g, ' ');
+      const name = (a.textContent || '').trim() || id;
+      const e = members[id] || (members[id] = { id: id, name: name, zone: null, posts: 0 });
+      e.posts++; found++;
+      const z = parseZone(text);
+      if (z) e.zone = z;
+    });
+    return { tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
+  }
+
+
   async function refresh() {
     if (busy) return;
     if (!getKey() && !askKey()) { problem = { code: 'nokey' }; render(); return; }
@@ -226,7 +261,14 @@
       data = await loadThread(tid, (n) => { progressN = n; render(); });
       writeSlot(CACHE_SLOT, JSON.stringify(data));
     } catch (err) {
-      problem = { code: err.code, message: err.message };
+      if (err.code === 6) {
+        try {
+          const base = data && data.tid === tid && data.scraped ? data : null;
+          data = scrapePage(base);
+          if (!data.postCount) { data = null; problem = { code: 'noposts' }; }
+          else writeSlot(CACHE_SLOT, JSON.stringify(data));
+        } catch (e2) { problem = { code: 'scrape', message: String(e2 && e2.message || e2) }; }
+      } else problem = { code: err.code, message: err.message };
     }
     busy = false;
     render();
@@ -376,6 +418,7 @@
 
     if (problem && problem.code === 'nothread') { sheet.appendChild(setupBlock('Which thread holds everyone\u2019s time zone?', 'Pick the thread', pickThread)); return; }
     if (problem && problem.code === 'nokey') { sheet.appendChild(setupBlock('This map needs an API key (any key works).', 'Enter key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
+    if (problem && (problem.code === 'noposts' || problem.code === 'scrape')) { sheet.appendChild(el('div', 'color:#f88;', problem.code === 'noposts' ? 'No posts found on this page. Scroll to the posts, then tap Time Zones again.' : 'Could not read the page: ' + problem.message)); return; }
     if (problem && problem.code === 6) {
       let h = '';
       try { h = (location.hash || location.search || '').slice(0, 120); } catch (e) { h = ''; }
