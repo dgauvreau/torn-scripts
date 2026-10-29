@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.7
+// @version      2.8
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -279,6 +279,7 @@
 
   // ---- state -------------------------------------------------------------
   let data = null;      // { tid, ts, postCount, capped, members }
+  let panelOpen = false;
   let problem = null;   // { code, message }
   let busy = false, progressN = 0;
   let overrides = {};
@@ -531,25 +532,32 @@
   function worldMap(known) {
     const NS = 'http://www.w3.org/2000/svg';
     const mk = (t, a) => { const n = document.createElementNS(NS, t); Object.keys(a || {}).forEach((k) => n.setAttribute(k, a[k])); return n; };
-    const svg = mk('svg', { viewBox: '0 0 360 190', width: '100%' });
-    svg.style.cssText = 'display:block;width:100%;height:auto;background:#10202e;border-radius:6px;margin:6px 0;';
-    for (let o = -12; o <= 14; o++) {
-      const x = o * 15 + 180;
-      svg.appendChild(mk('line', { x1: x, y1: 0, x2: x, y2: 180, stroke: '#2a3f52', 'stroke-width': 0.4 }));
-      if (o % 2 === 0) { const t = mk('text', { x: x, y: 188, 'text-anchor': 'middle', 'font-size': 6, fill: '#7a9bb5' }); t.textContent = (o > 0 ? '+' : '') + o; svg.appendChild(t); }
-    }
-    LAND.forEach((poly) => svg.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + (90 - q[1])).join(' '), fill: '#2e4a3a', stroke: '#4a6b57', 'stroke-width': 0.5 })));
     const groups = {};
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
-    Object.keys(groups).map(Number).forEach((off) => {
-      const n = groups[off].length;
+    const offs = Object.keys(groups).map(Number).sort((x, y) => x - y);
+    const n = Math.max(1, offs.length), colW = 360 / n;
+    const fs = Math.max(3.6, Math.min(6.6, colW / 6.4));          // name size shrinks when there are many zones
+    const maxChars = Math.max(4, Math.floor(colW / (fs * 0.62)));
+    const rowH = fs + 2.6;
+    let most = 1; offs.forEach((o) => { most = Math.max(most, groups[o].length); });
+    const H = 198 + most * rowH + 4;
+    const svg = mk('svg', { viewBox: '0 0 360 ' + H, width: '100%' });
+    svg.style.cssText = 'display:block;width:100%;height:auto;background:#10202e;border-radius:6px;margin:6px 0;';
+    for (let o = -12; o <= 14; o++) svg.appendChild(mk('line', { x1: o * 15 + 180, y1: 0, x2: o * 15 + 180, y2: 180, stroke: '#2a3f52', 'stroke-width': 0.4 }));
+    LAND.forEach((poly) => svg.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + (90 - q[1])).join(' '), fill: '#2e4a3a', stroke: '#4a6b57', 'stroke-width': 0.5 })));
+    offs.forEach((off, i) => {
       const lon = Math.max(-180, Math.min(180, off / 60 * 15));
-      const x = lon + 180, y = 90 - landLat(lon);
-      const r = 5 + Math.sqrt(n) * 3;
-      svg.appendChild(mk('circle', { cx: x, cy: y, r: r, fill: '#f5b942', 'fill-opacity': 0.85, stroke: '#fff', 'stroke-width': 0.8 }));
-      const t = mk('text', { x: x, y: y + 3, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 'bold', fill: '#111' });
-      t.textContent = String(n);
-      svg.appendChild(t);
+      const x = lon + 180, y = 90 - landLat(lon), cx = colW * i + colW / 2;
+      svg.appendChild(mk('line', { x1: x, y1: y, x2: cx, y2: 187, stroke: '#f5b942', 'stroke-width': 0.5, 'stroke-opacity': 0.7 }));
+      svg.appendChild(mk('circle', { cx: x, cy: y, r: 2.6, fill: '#f5b942', stroke: '#fff', 'stroke-width': 0.6 }));
+      const t0 = mk('text', { x: cx, y: 186, 'text-anchor': 'middle', 'font-size': Math.min(6, fs), fill: '#7a9bb5' });
+      t0.textContent = 'UTC' + (off > 0 ? '+' : off < 0 ? '−' : '') + (Math.abs(off) % 60 ? (off / 60).toFixed(1) : Math.abs(off) / 60);
+      svg.appendChild(t0);
+      groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1)).forEach((m, j) => {
+        const t = mk('text', { x: cx, y: 198 + j * rowH, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 'bold', fill: '#ffe9b0' });
+        t.textContent = m.name.length > maxChars ? m.name.slice(0, maxChars - 1) + '…' : m.name;
+        svg.appendChild(t);
+      });
     });
     return svg;
   }
@@ -583,6 +591,14 @@
     const all = resolved(now);
     const known = all.filter((m) => m.off !== null);
     const unknown = all.filter((m) => m.off === null).sort((a, b) => b.posts - a.posts);
+    const panel = document.createElement('details');
+    panel.style.cssText = 'margin-top:8px;';
+    if (panelOpen) panel.open = true;
+    panel.addEventListener('toggle', () => { panelOpen = panel.open; });
+    const sum = document.createElement('summary');
+    sum.style.cssText = 'cursor:pointer;color:#9cf;font-weight:bold;padding:6px 0;';
+    sum.textContent = 'Members and the posts behind them (' + all.length + (unknown.length ? ', ' + unknown.length + ' with no zone' : '') + ')';
+    panel.appendChild(sum);
 
     if (known.length) {
       sheet.appendChild(el('div', 'color:#fff;', known.length + ' members placed on the map'));
@@ -601,7 +617,7 @@
         g.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1).forEach((m) => names.appendChild(nameChip(m, now)));
         row.appendChild(names);
         g.forEach((m) => { if (m.zone && m.zone.snippet && !m.fromEdit) row.appendChild(el('div', 'font-size:10px;color:#888;margin-top:2px;', m.name + ': \u201c' + m.zone.snippet + '\u201d \u2192 ' + m.zone.label)); });
-        sheet.appendChild(row);
+        panel.appendChild(row);
       });
     } else {
       sheet.appendChild(el('div', 'margin:8px 0;', 'No time zones could be read from this thread yet.'));
@@ -614,9 +630,10 @@
       unknown.forEach((m) => names.appendChild(nameChip(m, now)));
       row.appendChild(names);
       unknown.filter((m) => m.sample).slice(0, 6).forEach((m) => row.appendChild(el('div', 'font-size:10px;color:#888;margin-top:2px;', 'saw: ' + m.name + ' \u2013 ' + m.sample)));
-      sheet.appendChild(row);
+      panel.appendChild(row);
     }
 
+    if (panel.children.length > 1) sheet.appendChild(panel);
     const foot = el('div', 'margin-top:10px;padding-top:6px;border-top:1px solid #444;font-size:11px;color:#888;display:flex;justify-content:space-between;align-items:center;');
     const mins = Math.max(0, Math.round((now / 1000 - data.ts) / 60));
     foot.appendChild(el('span', 'flex:1;min-width:0;', data.postCount + ' posts, thread ' + data.tid + ' \u00b7 read ' + (mins < 1 ? 'just now' : mins + 'm ago') + (data.capped ? ' \u00b7 thread longer than the page limit, newest posts not read' : '') + ' \u00b7 \u2605 = set by hand'));
