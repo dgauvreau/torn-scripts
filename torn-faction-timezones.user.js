@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.2
+// @version      2.3
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -106,7 +106,7 @@
   // The thread's own format: "When 00:00 happens in Torn it is 5pm/17:00 for me" (the local time at Torn midnight).
   // That time IS the offset from UTC (17:00 -> UTC-7). With "summer ... winter" answers, the one that applies now is used.
   function parseClock(text) {
-    const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=|:)\s*(?=\d)|\b(?:midnight|00(?::00)?|24:00|12\s*am)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=)\s*(?=\d)/i.exec(text);
+    const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=|:)\s*(?=\d)|\b(?:midnight|00(?::00)?(?![\d:])|24:00(?!\d)|12\s*am)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|i am|i'm|am|=)\s*(?=\d)/i.exec(text);
     if (!lead) return null;
     const rest = text.slice(lead.index + lead[0].length, lead.index + lead[0].length + 220);
     const tre = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/gi;
@@ -258,32 +258,55 @@
   // Each page you open adds its posters to what is already known for this thread.
   function scrapePage(base) {
     const members = (base && base.members) || {};
-    const done = [];
-    let found = 0;
-    const links = Array.prototype.slice.call(document.querySelectorAll('a[href*="profiles.php?XID="]'));
-    links.forEach((a) => {
-      const m = /XID=(\d+)/.exec(a.getAttribute('href') || '');
-      if (!m) return;
-      const id = m[1];
-      // climb until the block holds more text than the name and still only one poster
-      let box = a.parentElement, best = null;
-      for (let i = 0; i < 8 && box && box !== document.body; i++) {
-        const ids = {};
-        Array.prototype.forEach.call(box.querySelectorAll('a[href*="profiles.php?XID="]'), (x) => { const mm = /XID=(\d+)/.exec(x.getAttribute('href') || ''); if (mm) ids[mm[1]] = 1; });
-        if (Object.keys(ids).length > 1) break;
-        if ((box.textContent || '').trim().length > 80) best = box;
-        box = box.parentElement;
+    const units = [];   // { id, name, box }
+    const XID = 'a[href*="profiles.php?XID="]';
+    const idOf = (a) => { const m = /XID=(\d+)/.exec(a.getAttribute('href') || ''); return m ? m[1] : ''; };
+    // Method 1: every post carries a "Posted on ..." / "Thread created on ..." line. Find those, take the post block around each.
+    const MARK = /(?:Posted on|Thread created on)\s+\d/g;
+    const allLinks = Array.prototype.slice.call(document.querySelectorAll(XID));
+    const walker = document.createTreeWalker(document.body, 4, null);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!/^\s*(?:Posted on|Thread created on)\s+\d/.test(node.nodeValue || '')) continue;
+      let box = node.parentElement;
+      while (box.parentElement && box.parentElement !== document.body) {
+        const up = box.parentElement;
+        const marks = (up.textContent || '').match(MARK);
+        if (marks && marks.length > 1) break;
+        box = up;
       }
-      if (!best || done.indexOf(best) >= 0) return;
-      done.push(best);
-      const clone = best.cloneNode(true);
+      let link = box.querySelector(XID);
+      if (!link) {
+        for (let i = allLinks.length - 1; i >= 0; i--) {
+          if (allLinks[i].compareDocumentPosition(node) & 4) { link = allLinks[i]; break; } // link comes before the marker
+        }
+      }
+      if (link && idOf(link)) units.push({ id: idOf(link), name: (link.textContent || '').trim() || ((link.querySelector('img') || {}).alt || link.getAttribute('title') || '').trim(), box: box });
+    }
+    // Method 2 (only if method 1 found nothing): climb from each poster link.
+    if (!units.length) {
+      allLinks.forEach((a) => {
+        const id = idOf(a);
+        if (!id) return;
+        let box = a.parentElement, best = null;
+        for (let i = 0; i < 8 && box && box !== document.body; i++) {
+          const ids = {};
+          Array.prototype.forEach.call(box.querySelectorAll(XID), (x) => { ids[idOf(x)] = 1; });
+          if (Object.keys(ids).length > 1) break;
+          if ((box.textContent || '').trim().length > 80) best = box;
+          box = box.parentElement;
+        }
+        if (best && !units.some((u) => u.box === best)) units.push({ id: id, name: (a.textContent || '').trim(), box: best });
+      });
+    }
+    let found = 0;
+    units.forEach((u) => {
+      const clone = u.box.cloneNode(true);
       Array.prototype.forEach.call(clone.querySelectorAll('blockquote, [class*="quote"], [class*="Quote"], script, style'), (n) => n.remove());
-      const text = (clone.textContent || '').replace(/\u00a0/g, ' ');
-      const name = (a.textContent || '').trim() || id;
-      const e = members[id] || (members[id] = { id: id, name: name, zone: null, posts: 0 });
+      const text = (clone.textContent || '').replace(/ /g, ' ');
+      const full = (u.box.textContent || '').replace(/ /g, ' ');
+      const e = members[u.id] || (members[u.id] = { id: u.id, name: u.name || u.id, zone: null, posts: 0 });
       e.posts++; found++;
-      // if the quote-stripped text has no zone, try the full post text (in case a wrapper was mistaken for a quote)
-      const full = (best.textContent || '').replace(/\u00a0/g, ' ');
       const z = parseZone(text) || parseZone(full);
       if (z) e.zone = z;
       else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
