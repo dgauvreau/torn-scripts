@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.0
+// @version      1.1
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -376,6 +376,12 @@
 
     if (problem && problem.code === 'nothread') { sheet.appendChild(setupBlock('Which thread holds everyone\u2019s time zone?', 'Pick the thread', pickThread)); return; }
     if (problem && problem.code === 'nokey') { sheet.appendChild(setupBlock('This map needs an API key (any key works).', 'Enter key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
+    if (problem && problem.code === 6) {
+      let h = '';
+      try { h = (location.hash || location.search || '').slice(0, 120); } catch (e) { h = ''; }
+      sheet.appendChild(setupBlock('Torn says thread number "' + tid + '" isn’t valid. Page address part: ' + (h || '(none)'), 'Enter the thread number', pickThread));
+      return;
+    }
     if (problem && problem.code === 2) { sheet.appendChild(setupBlock('Torn didn\u2019t accept the key.', 'Enter a new key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
     if (problem) sheet.appendChild(el('div', 'color:' + (problem.code === 5 ? '#fc6' : '#f88') + ';', problem.code === 5 ? 'Rate limited - try again in a minute.' : 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
 
