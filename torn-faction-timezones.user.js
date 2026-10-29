@@ -1,34 +1,17 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.6
+// @version      1.7
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
 // ==/UserScript==
 
-(function () {
-  'use strict';
-  const TZ_VERSION = '1.6';
-  // Safety net: if anything goes wrong while the script starts, say so on screen instead of failing silently.
-  function tzNote(text, bad) {
-    try {
-      const d = document.createElement('div');
-      d.textContent = text;
-      d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:4px 8px;font:11px sans-serif;text-align:center;color:#fff;pointer-events:none;background:' + (bad ? '#7a1f1f' : '#1f5f2f') + ';';
-      (document.body || document.documentElement).appendChild(d);
-      setTimeout(() => d.remove(), bad ? 30000 : 15000);
-    } catch (e) {}
-  }
-  try {
-  (function () {
+;(function () {
   'use strict';
   if (window.top !== window.self) return; // not inside iframes
-  // Not gated on the address at load time: Torn can reach the forums without a full page load, so the
-  // button checks the address on every tick instead (see ensureButton).
-  const onForums = () => /\/forums\.php/i.test(location.pathname);
-  tzNote('Time Zones ' + TZ_VERSION + ' running on ' + location.pathname + (location.hash ? ' (+hash)' : ''), false);
+  if (!/\/forums\.php/i.test(location.pathname)) return;
 
   // ---- settings ----------------------------------------------------------
   const MAX_PAGES = 60;            // most API pages read per refresh
@@ -393,12 +376,6 @@
 
     if (problem && problem.code === 'nothread') { sheet.appendChild(setupBlock('Which thread holds everyone\u2019s time zone?', 'Pick the thread', pickThread)); return; }
     if (problem && problem.code === 'nokey') { sheet.appendChild(setupBlock('This map needs an API key (any key works).', 'Enter key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
-    if (problem && problem.code === 6) {
-      let h = '';
-      try { h = (location.hash || location.search || '').slice(0, 120); } catch (e) { h = ''; }
-      sheet.appendChild(setupBlock('Torn says thread number "' + tid + '" isn’t valid. Page address part: ' + (h || '(none)'), 'Enter the thread number', pickThread));
-      return;
-    }
     if (problem && problem.code === 2) { sheet.appendChild(setupBlock('Torn didn\u2019t accept the key.', 'Enter a new key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
     if (problem) sheet.appendChild(el('div', 'color:' + (problem.code === 5 ? '#fc6' : '#f88') + ';', problem.code === 5 ? 'Rate limited - try again in a minute.' : 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
 
@@ -471,54 +448,16 @@
   function closeMap() { overlay.style.display = 'none'; }
 
   // ---- button ------------------------------------------------------------
-  // The button sits in the middle of the "Forums" title bar at the top of the page (found by its class, or
-  // failing that by the heading whose text is just "Forums"). If no title bar can be found it floats at the
-  // bottom right instead, so it is never missing.
-  const BTN_BASE = 'box-sizing:border-box;padding:6px 14px;font:inherit;font-size:13px;font-weight:bold;color:#ddd;background:linear-gradient(rgba(255,255,255,.16),rgba(128,128,128,.22));border:1px solid rgba(128,128,128,.7);border-radius:7px;box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);cursor:pointer;white-space:nowrap;z-index:5;';
-  const open = el('button', '', '\ud83c\udf0d Time Zones');
+  const open = el('button', 'position:fixed;right:10px;bottom:70px;z-index:2147483646;padding:6px 12px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;border-radius:14px;font:bold 12px sans-serif;cursor:pointer;', '\ud83c\udf0d Time Zones');
   open.type = 'button';
-  open.setAttribute('data-tz-btn', '1');
   open.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openMap(); });
-  function findTitleBar() {
-    const direct = document.querySelector('.content-title, [class*="content-title"]');
-    if (direct) return direct;
-    const root = document.querySelector('#mainContainer') || document.body;
-    const heads = root.querySelectorAll('h1,h2,h3,h4,h5,[class*="title"],[class*="Title"]');
-    for (let i = 0; i < heads.length; i++) {
-      const h = heads[i];
-      if (h.children.length > 3 || !/^\s*Forums\s*$/i.test(h.textContent)) continue;
-      const bar = h.closest('.content-title') || h.parentElement;
-      if (!bar) continue;
-      const r = bar.getBoundingClientRect();
-      if (r.height >= 24 && r.height <= 140) return bar;
-    }
-    return null;
-  }
   function ensureButton() {
     const host = document.body || document.documentElement;
-    if (!host) return;
-    if (!onForums()) { if (open.parentNode) open.remove(); if (overlay.style.display === 'block') closeMap(); return; }
-    const bar = findTitleBar();
-    const br = bar ? bar.getBoundingClientRect() : null;
-    // Only use the title bar if it is really on screen at a sensible size; otherwise float, so the button is never invisible.
-    if (bar && br.width > 100 && br.height >= 20) {
-      if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
-      const css = BTN_BASE + 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);';
-      if (open.dataset.css !== css) { open.style.cssText = css; open.dataset.css = css; }
-      if (open.parentNode !== bar) bar.appendChild(open);
-    } else {
-      const css = BTN_BASE + 'position:fixed;right:10px;bottom:70px;z-index:2147483646;';
-      if (open.dataset.css !== css) { open.style.cssText = css; open.dataset.css = css; }
-      if (open.parentNode !== host) host.appendChild(open);
-    }
+    if (host && open.parentNode !== host) host.appendChild(open);
   }
   ensureButton();
   document.addEventListener('DOMContentLoaded', ensureButton);
   window.addEventListener('load', ensureButton);
-  setInterval(ensureButton, 1000);
+  setInterval(ensureButton, 2000);
   setInterval(() => { if (overlay.style.display === 'block' && !busy) render(); }, 30000);
-  // One-off report a moment after start, so a missing button can be diagnosed from a screenshot.
-  setTimeout(() => { tzNote('Time Zones ' + TZ_VERSION + ': forums page ' + (onForums() ? 'yes' : 'no') + ' \u00b7 title bar ' + (findTitleBar() ? (Math.round(findTitleBar().getBoundingClientRect().width) + 'x' + Math.round(findTitleBar().getBoundingClientRect().height)) : 'not found') + ' \u00b7 button at ' + (open.isConnected ? (Math.round(open.getBoundingClientRect().left) + ',' + Math.round(open.getBoundingClientRect().top)) : 'none') + ' \u00b7 button ' + (open.isConnected ? 'on page' : 'missing'), !open.isConnected && onForums()); }, 2500);
-  })();
-  } catch (err) { tzNote('Time Zones ' + TZ_VERSION + ' error: ' + (err && err.message), true); }
 })();
