@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.5
+// @version      2.6
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -106,10 +106,22 @@
   // The thread's own format: "When 00:00 happens in Torn it is 5pm/17:00 for me" (the local time at Torn midnight).
   // That time IS the offset from UTC (17:00 -> UTC-7). With "summer ... winter" answers, the one that applies now is used.
   function parseClock(text) {
-    const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|=|:)\s*(?=\d)|\b(?:midnight|00(?::00)?(?![\d:])|24:00(?!\d)|12\s*am)\b[^.\n]{0,40}?\b(?:it is|it's|its|is|i am|i'm|am|=)\s*(?=\d)/i.exec(text);
-    if (!lead) return null;
-    const rest = text.slice(lead.index + lead[0].length, lead.index + lead[0].length + 220);
-    const tre = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/gi;
+    const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?(?:\b(?:it is|it's|its|is)|=|[a-z]:)\s*(?=\d)|\b(?:midnight|00(?::00)?(?![\d:])|24:00(?!\d)|12\s*am)\b[^.\n]{0,40}?(?:\b(?:it is|it's|its|is|i am|i'm|am)|=)\s*(?=\d)/i.exec(text);
+    let start = -1;
+    if (lead) start = lead.index + lead[0].length;
+    else {
+      // looser: a mention of Torn time / midnight, then a clock time shortly after it
+      const loose = /\b(?:torn|tct|midnight|reset)\b|(?:^|[^\d:])(?:00(?::00)?|24:00)(?![\d:])/i.exec(text);
+      if (loose) {
+        const after = text.slice(loose.index + loose[0].length, loose.index + loose[0].length + 90);
+        const after2 = after.replace(/(^|[^\d:\/])(?:00:00|24:00|0:00|00)(?![\d:])/g, (mm, g1) => g1 + ' '.repeat(mm.length - g1.length));
+        const t = /(?:^|[^\d:\/])(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)|\d{1,2}:\d{2}|\d{1,2}\s*(?:h|hrs?|hours?|o'?clock))(?![\d\/:])/i.exec(after2);
+        if (t) start = loose.index + loose[0].length + (after.indexOf(t[1], Math.max(0, t.index - 1)) >= 0 ? after.indexOf(t[1], Math.max(0, t.index - 1)) : t.index);
+      }
+    }
+    if (start < 0) return null;
+    const rest = text.slice(start, start + 220);
+    const tre = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?(?:\s*h(?:rs?|ours?)?\b)?/gi;
     const times = [];
     let x;
     while ((x = tre.exec(rest)) && times.length < 6) {
@@ -142,7 +154,7 @@
     let off = pick.mins === 1440 ? 0 : pick.mins;
     if (off > 14 * 60) off -= 1440;
     const sign = off < 0 ? '-' : '+', a = Math.abs(off);
-    return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, lead.index), lead.index + lead[0].length + 60).replace(/\s+/g, ' ').trim() };
+    return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, start - 45), start + 60).replace(/\s+/g, ' ').trim() };
   }
 
   // Best reading of a piece of text: the first time zone it mentions (earliest wins).
