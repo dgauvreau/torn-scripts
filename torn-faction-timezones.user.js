@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.6
+// @version      2.7
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -157,6 +157,19 @@
     return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, start - 45), start + 60).replace(/\s+/g, ' ').trim() };
   }
 
+  // Last resort: "it's 2pm for me" with no mention of Torn at all means the same thing (the local time when Torn is at 00:00).
+  function weakClock(text) {
+    const m = /\b(?:it(?:'s| is)|its)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)(?![a-z])|\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\s+(?:for me|here|my time|local)/i.exec(text);
+    if (!m) return null;
+    let h = +(m[1] || m[4]); const mi = +(m[2] || m[5] || 0); const ap = (m[3] || m[6]).toLowerCase().replace(/\./g, '');
+    if (h > 12 || h < 1 || mi > 59) return null;
+    if (ap === 'pm' && h < 12) h += 12; else if (ap === 'am' && h === 12) h = 0;
+    let off = h * 60 + mi;
+    if (off > 14 * 60) off -= 1440;
+    const sign = off < 0 ? '-' : '+', a = Math.abs(off);
+    return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, m.index - 20), m.index + m[0].length + 30).replace(/\s+/g, ' ').trim() };
+  }
+
   // Best reading of a piece of text: the first time zone it mentions (earliest wins).
   function parseZone(text) {
     if (!text) return null;
@@ -179,7 +192,7 @@
       const x = r[0].exec(text);
       if (x) hits.push({ idx: x.index, tz: r[1], label: x[0] });
     });
-    if (!hits.length) return null;
+    if (!hits.length) return weakClock(text);
     hits.sort((a, b) => a.idx - b.idx);
     const h = hits[0];
     const out = { label: h.label, snippet: text.slice(Math.max(0, h.idx - 30), h.idx + 45).replace(/\s+/g, ' ').trim() };
