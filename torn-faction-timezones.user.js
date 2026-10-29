@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.1
+// @version      1.2
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -11,7 +11,9 @@
 (function () {
   'use strict';
   if (window.top !== window.self) return; // not inside iframes
-  if (!/\/forums\.php/i.test(location.pathname)) return;
+  // Not gated on the address at load time: Torn can reach the forums without a full page load, so the
+  // button checks the address on every tick instead (see ensureButton).
+  const onForums = () => /\/forums\.php/i.test(location.pathname);
 
   // ---- settings ----------------------------------------------------------
   const MAX_PAGES = 60;            // most API pages read per refresh
@@ -459,7 +461,9 @@
   open.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openMap(); });
   function ensureButton() {
     const host = document.body || document.documentElement;
-    if (host && open.parentNode !== host) host.appendChild(open);
+    if (!host) return;
+    if (!onForums()) { if (open.parentNode) open.remove(); if (overlay.style.display === 'block') closeMap(); return; }
+    if (open.parentNode !== host) host.appendChild(open);
   }
   ensureButton();
   document.addEventListener('DOMContentLoaded', ensureButton);
