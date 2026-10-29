@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.1
+// @version      2.2
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -282,8 +282,11 @@
       const name = (a.textContent || '').trim() || id;
       const e = members[id] || (members[id] = { id: id, name: name, zone: null, posts: 0 });
       e.posts++; found++;
-      const z = parseZone(text);
+      // if the quote-stripped text has no zone, try the full post text (in case a wrapper was mistaken for a quote)
+      const full = (best.textContent || '').replace(/\u00a0/g, ' ');
+      const z = parseZone(text) || parseZone(full);
       if (z) e.zone = z;
+      else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
     });
     return { tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
   }
@@ -547,6 +550,7 @@
       const names = el('div');
       unknown.forEach((m) => names.appendChild(nameChip(m, now)));
       row.appendChild(names);
+      unknown.filter((m) => m.sample).slice(0, 6).forEach((m) => row.appendChild(el('div', 'font-size:10px;color:#888;margin-top:2px;', 'saw: ' + m.name + ' \u2013 ' + m.sample)));
       sheet.appendChild(row);
     }
 
