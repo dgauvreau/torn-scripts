@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.4
+// @version      2.5
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -124,13 +124,20 @@
     while ((x = sre.exec(rest))) seasons.push({ idx: x.index, summer: /summer|dst|daylight/i.test(x[1]) });
     let pick = times[0];
     if (seasons.length > 1) {
-      const m = new Date().getUTCMonth() + 1;
-      const wantSummer = m >= 4 && m <= 10;
-      const hit = times.find((t) => {
-        const s2 = seasons.find((sx) => sx.idx >= t.end && sx.idx - t.end < 45);
-        return s2 && s2.summer === wantSummer;
-      });
-      if (hit) pick = hit;
+      const seasonOf = (t) => { const sx = seasons.find((q) => q.idx >= t.end && q.idx - t.end < 45); return sx ? sx.summer : null; };
+      const sumT = times.find((t) => seasonOf(t) === true), winT = times.find((t) => seasonOf(t) === false);
+      if (sumT && winT) {
+        const so = sumT.mins > 14 * 60 ? sumT.mins - 1440 : sumT.mins;   // the summer offset, in minutes
+        const d = new Date(), y = d.getUTCFullYear(), nowMs = d.getTime();
+        const sunday = (yy, mo, n) => { const f = new Date(Date.UTC(yy, mo, 1)).getUTCDay(); return 1 + ((7 - f) % 7) + (n - 1) * 7; };   // n-th Sunday of month
+        const lastSunday = (yy, mo) => { const last = new Date(Date.UTC(yy, mo + 1, 0)); return last.getUTCDate() - last.getUTCDay(); };
+        let summerNow;
+        if (so <= -180 && so >= -600) summerNow = nowMs >= Date.UTC(y, 2, sunday(y, 2, 2), 10) && nowMs < Date.UTC(y, 10, sunday(y, 10, 1), 6);   // US/Canada
+        else if (so >= 0 && so <= 180) summerNow = nowMs >= Date.UTC(y, 2, lastSunday(y, 2), 1) && nowMs < Date.UTC(y, 9, lastSunday(y, 9), 1); // Europe
+        else if (so >= 480 && so <= 780) { const mo = d.getUTCMonth(); summerNow = mo >= 9 || mo <= 2; }                                      // Australia / NZ
+        else { const mo = d.getUTCMonth(); summerNow = mo >= 3 && mo <= 9; }
+        pick = summerNow ? sumT : winT;
+      }
     }
     let off = pick.mins === 1440 ? 0 : pick.mins;
     if (off > 14 * 60) off -= 1440;
@@ -281,7 +288,7 @@
           if (allLinks[i].compareDocumentPosition(node) & 4) { link = allLinks[i]; break; } // link comes before the marker
         }
       }
-      if (link && idOf(link)) units.push({ id: idOf(link), name: (link.textContent || '').trim() || ((link.querySelector('img') || {}).alt || link.getAttribute('title') || '').trim(), box: box });
+      if (link && idOf(link)) units.push({ id: idOf(link), name: ((/^\s*view profile\s*$/i.test(link.textContent || '') ? '' : (link.textContent || '')).trim()) || ((link.querySelector('img') || {}).alt || link.getAttribute('title') || '').trim() || '', box: box, link: link });
     }
     // Method 2 (only if method 1 found nothing): climb from each poster link.
     if (!units.length) {
@@ -305,7 +312,14 @@
       Array.prototype.forEach.call(clone.querySelectorAll('blockquote, [class*="quote"], [class*="Quote"], script, style'), (n) => n.remove());
       const text = (clone.textContent || '').replace(/ /g, ' ');
       const full = (u.box.textContent || '').replace(/ /g, ' ');
-      const e = members[u.id] || (members[u.id] = { id: u.id, name: u.name || u.id, zone: null, posts: 0 });
+      let nm = u.name;
+      const generic = (t) => !t || /^\s*view profile\s*$/i.test(t);
+      if (generic(nm)) {
+        Array.prototype.some.call(u.box.querySelectorAll(XID), (x) => { if (idOf(x) === u.id && !generic(x.textContent.trim())) { nm = x.textContent.trim(); return true; } return false; });
+      }
+      if (generic(nm)) { const im = u.box.querySelector('img[alt]:not([alt=""])'); if (im && !generic(im.alt)) nm = im.alt.trim(); }
+      const e = members[u.id] || (members[u.id] = { id: u.id, name: nm || u.id, zone: null, posts: 0 });
+      if (!generic(nm) && (generic(e.name) || e.name === u.id)) e.name = nm;
       e.posts++; found++;
       const z = parseZone(text) || parseZone(full);
       if (z) e.zone = z;
