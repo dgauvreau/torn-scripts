@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.4
+// @version      1.5
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -10,7 +10,7 @@
 
 (function () {
   'use strict';
-  const TZ_VERSION = '1.4';
+  const TZ_VERSION = '1.5';
   // Safety net: if anything goes wrong while the script starts, say so on screen instead of failing silently.
   function tzNote(text, bad) {
     try {
@@ -18,7 +18,7 @@
       d.textContent = text;
       d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:4px 8px;font:11px sans-serif;text-align:center;color:#fff;pointer-events:none;background:' + (bad ? '#7a1f1f' : '#1f5f2f') + ';';
       (document.body || document.documentElement).appendChild(d);
-      setTimeout(() => d.remove(), bad ? 20000 : 3500);
+      setTimeout(() => d.remove(), bad ? 20000 : 6000);
     } catch (e) {}
   }
   try {
@@ -28,7 +28,7 @@
   // Not gated on the address at load time: Torn can reach the forums without a full page load, so the
   // button checks the address on every tick instead (see ensureButton).
   const onForums = () => /\/forums\.php/i.test(location.pathname);
-  if (onForums()) tzNote('Time Zones ' + TZ_VERSION + ' loaded', false);
+  tzNote('Time Zones ' + TZ_VERSION + ' running on ' + location.pathname + (location.hash ? ' (+hash)' : ''), false);
 
   // ---- settings ----------------------------------------------------------
   const MAX_PAGES = 60;            // most API pages read per refresh
@@ -515,6 +515,8 @@
   window.addEventListener('load', ensureButton);
   setInterval(ensureButton, 1000);
   setInterval(() => { if (overlay.style.display === 'block' && !busy) render(); }, 30000);
+  // One-off report a moment after start, so a missing button can be diagnosed from a screenshot.
+  setTimeout(() => { tzNote('Time Zones ' + TZ_VERSION + ': forums page ' + (onForums() ? 'yes' : 'no') + ' \u00b7 title bar ' + (findTitleBar() ? 'found' : 'not found') + ' \u00b7 button ' + (open.isConnected ? 'on page' : 'missing'), !open.isConnected && onForums()); }, 2500);
   })();
   } catch (err) { tzNote('Time Zones ' + TZ_VERSION + ' error: ' + (err && err.message), true); }
 })();
