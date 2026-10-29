@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      1.2
+// @version      1.3
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -456,18 +456,48 @@
   function closeMap() { overlay.style.display = 'none'; }
 
   // ---- button ------------------------------------------------------------
-  const open = el('button', 'position:fixed;right:10px;bottom:70px;z-index:2147483646;padding:6px 12px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;border-radius:14px;font:bold 12px sans-serif;cursor:pointer;', '\ud83c\udf0d Time Zones');
+  // The button sits in the middle of the "Forums" title bar at the top of the page (found by its class, or
+  // failing that by the heading whose text is just "Forums"). If no title bar can be found it floats at the
+  // bottom right instead, so it is never missing.
+  const BTN_BASE = 'box-sizing:border-box;padding:6px 14px;font:inherit;font-size:13px;font-weight:bold;color:#ddd;background:linear-gradient(rgba(255,255,255,.16),rgba(128,128,128,.22));border:1px solid rgba(128,128,128,.7);border-radius:7px;box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);cursor:pointer;white-space:nowrap;z-index:5;';
+  const open = el('button', '', '\ud83c\udf0d Time Zones');
   open.type = 'button';
+  open.setAttribute('data-tz-btn', '1');
   open.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openMap(); });
+  function findTitleBar() {
+    const direct = document.querySelector('.content-title, [class*="content-title"]');
+    if (direct) return direct;
+    const root = document.querySelector('#mainContainer') || document.body;
+    const heads = root.querySelectorAll('h1,h2,h3,h4,h5,[class*="title"],[class*="Title"]');
+    for (let i = 0; i < heads.length; i++) {
+      const h = heads[i];
+      if (h.children.length > 3 || !/^\s*Forums\s*$/i.test(h.textContent)) continue;
+      const bar = h.closest('.content-title') || h.parentElement;
+      if (!bar) continue;
+      const r = bar.getBoundingClientRect();
+      if (r.height >= 24 && r.height <= 140) return bar;
+    }
+    return null;
+  }
   function ensureButton() {
     const host = document.body || document.documentElement;
     if (!host) return;
     if (!onForums()) { if (open.parentNode) open.remove(); if (overlay.style.display === 'block') closeMap(); return; }
-    if (open.parentNode !== host) host.appendChild(open);
+    const bar = findTitleBar();
+    if (bar) {
+      if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
+      const css = BTN_BASE + 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);';
+      if (open.dataset.css !== css) { open.style.cssText = css; open.dataset.css = css; }
+      if (open.parentNode !== bar) bar.appendChild(open);
+    } else {
+      const css = BTN_BASE + 'position:fixed;right:10px;bottom:70px;z-index:2147483646;';
+      if (open.dataset.css !== css) { open.style.cssText = css; open.dataset.css = css; }
+      if (open.parentNode !== host) host.appendChild(open);
+    }
   }
   ensureButton();
   document.addEventListener('DOMContentLoaded', ensureButton);
   window.addEventListener('load', ensureButton);
-  setInterval(ensureButton, 2000);
+  setInterval(ensureButton, 1000);
   setInterval(() => { if (overlay.style.display === 'block' && !busy) render(); }, 30000);
 })();
