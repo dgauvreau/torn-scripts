@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Halloween Basket
 // @namespace    torn-halloween-basket
-// @version      1.2
-// @description  During the Halloween season, adds a pumpkin icon to Torn's top icon row. Tap it to jump to your basket on the Items page: it scrolls to the basket, highlights it and opens its options so "Use" is one tap away. No API key needed.
+// @version      2.0
+// @description  During the Halloween season, shows an informational banner at the very top of every Torn page: a link to your basket, its level (tier name and number) and how many treats it holds. Torn only shows the treat count inside the basket on the Items page, so the numbers are read there and remembered; tap the banner to open the basket and refresh them. No API key needed.
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -22,6 +22,8 @@
   const BASKET_RE = /^Halloween Basket/i;   // matches every basket tier (Spooky ... Apocalyptic)
   const WAIT_MS = 15000;           // how long to wait for the item list to load
   const ENTRY_LABEL = 'Halloween Basket';
+  const SNAP_SLOT = 'hb_snapshot';   // last level / treat count read from the basket
+  const TIERS = ['Spooky', 'Creepy', 'Freaky', 'Frightful', 'Haunting', 'Shocking', 'Terrifying', 'Horrifying', 'Petrifying', 'Nightmarish', 'Apocalyptic'];
 
   function inSeason() {
     const d = new Date();
@@ -119,58 +121,51 @@
     opening = false;
   }
 
-  // ---- header icon -------------------------------------------------------
-  // A pumpkin in Torn's top icon row. On a phone it sits in the header row between the menu button and the
-  // search icon; on a wide screen it sits just past the avatar at the end of the toolbar.
-  const icon = document.createElement('a');
-  icon.href = ITEMS_URL;
-  icon.title = ENTRY_LABEL;
-  icon.setAttribute('aria-label', ENTRY_LABEL);
-  icon.textContent = '\ud83c\udf83';
-  const ICON_TOP_PX = 2;         // distance below the top of the header (phone layout)
-  const ICON_CENTER_PCT = 34.5;  // horizontal centre, as a % of screen width (phone layout)
-  const DESKTOP_GAP_PX = 38;     // distance past the avatar (wide layout), leaving room for other header icons
-  const ICON_BASE =
-    'z-index:2147483646;margin:0;padding:0;width:30px;height:30px;display:flex;align-items:center;' +
-    'justify-content:center;background:transparent;border:0;font-size:20px;line-height:1;cursor:pointer;text-decoration:none;';
-  function isFixed(el) {
-    for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
-      if (getComputedStyle(e).position === 'fixed') return true;
+  // ---- reading the basket --------------------------------------------------
+  // Level comes from the basket's name ("Halloween Basket : Freaky" -> Freaky, level 3). The treat count is
+  // shown inside the basket's own panel, so it is read from the opened row, falling back to the open panel.
+  const TIER_RE = new RegExp('\\b(' + TIERS.join('|') + ')\\b', 'i');
+  const TREAT_RES = [/(\d[\d,]*)\s+treats?\b/i, /\btreats?\b\s*[:\-–x×]?\s*(\d[\d,]*)/i];
+  function readSnapshot() {
+    try { const o = JSON.parse(localStorage.getItem(SNAP_SLOT) || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+  }
+  function saveSnapshot(o) { try { localStorage.setItem(SNAP_SLOT, JSON.stringify(o)); } catch (e) {} }
+  function findTreats(text) {
+    for (let i = 0; i < TREAT_RES.length; i++) {
+      const m = TREAT_RES[i].exec(text);
+      if (m) return +m[1].replace(/,/g, '');
     }
-    return false;
+    return null;
   }
-  // Banners other scripts add can push the header down, so measure where it actually is.
-  function phoneStyle() {
-    const h = document.querySelector('#header-root') || document.querySelector('.header-wrapper-top');
-    let top = ICON_TOP_PX, pos = 'absolute';
-    if (h) {
-      const r = h.getBoundingClientRect();
-      const fixed = isFixed(h);
-      pos = fixed ? 'fixed' : 'absolute';
-      top = Math.round(r.top + (fixed ? 0 : window.scrollY)) + ICON_TOP_PX;
+  function scanBasket() {
+    const li = findBasket();
+    if (!li) return;
+    const name = (li.getAttribute('data-sort') || '') + ' ' + (li.querySelector('img') ? li.querySelector('img').getAttribute('alt') || '' : '') + ' ' + (li.textContent || '').slice(0, 300);
+    const tm = TIER_RE.exec(name);
+    const snap = readSnapshot() || {};
+    let changed = false;
+    if (tm) {
+      const tier = TIERS.findIndex((t) => t.toLowerCase() === tm[1].toLowerCase()) + 1;
+      if (snap.tier !== tier) { snap.tier = tier; changed = true; }
     }
-    return 'position:' + pos + ';top:' + top + 'px;left:calc(' + ICON_CENTER_PCT + '% - 15px);' + ICON_BASE;
+    // Treat count: the row itself, its info panel, then (only while the basket is open) the whole page.
+    const panel = li.querySelector('.show-item-info, [class*="show-item-info"], [class*="item-info"]');
+    let treats = findTreats((li.textContent || '') + ' ' + (panel ? panel.textContent || '' : ''));
+    if (treats === null && /\bopened\b/.test(li.className)) treats = findTreats((document.body && document.body.textContent) || '');
+    if (treats !== null && snap.treats !== treats) { snap.treats = treats; changed = true; }
+    if (changed || !snap.ts) { snap.ts = Math.floor(Date.now() / 1000); saveSnapshot(snap); render(); }
+    else if (tm || treats !== null) { snap.ts = Math.floor(Date.now() / 1000); saveSnapshot(snap); }
   }
-  function iconStyle() {
-    const av = document.querySelector('ul.toolbar li.avatar');
-    if (!av) return phoneStyle();
-    const r = av.getBoundingClientRect();
-    if (!r.width || r.right + DESKTOP_GAP_PX + 30 > window.innerWidth - 4) return phoneStyle();
-    const fixed = isFixed(av);
-    const top = Math.round(r.top + (r.height - 30) / 2) + (fixed ? 0 : window.scrollY);
-    const left = Math.round(r.right + DESKTOP_GAP_PX) + (fixed ? 0 : window.scrollX);
-    return 'position:' + (fixed ? 'fixed' : 'absolute') + ';top:' + top + 'px;left:' + left + 'px;' + ICON_BASE;
-  }
-  function ensureIcon() {
-    const host = document.body || document.documentElement;
-    if (!host) return;
-    if (icon.parentNode !== host) host.appendChild(icon);
-    const st = iconStyle();
-    if (icon.dataset.st !== st) { icon.style.cssText = st; icon.dataset.st = st; }
-  }
-  icon.addEventListener('click', (e) => {
+
+  // ---- banner at the very top ------------------------------------------------
+  const banner = document.createElement('a');
+  banner.href = ITEMS_URL;
+  banner.setAttribute('data-halloween-basket-banner', '1');
+  banner.style.cssText =
+    'display:block;box-sizing:border-box;margin:4px auto;padding:6px 12px;max-width:92%;background:#2b1a00;color:#ffd9a0;' +
+    'border:1px solid #f80;border-radius:14px;font:bold 13px sans-serif;text-align:center;text-decoration:none;cursor:pointer;';
+  banner.addEventListener('click', (e) => {
     e.preventDefault();
-    e.stopPropagation();
     if (onItems) {
       try { location.hash = '#special-items'; } catch (x) {}
       openBasket();
@@ -179,13 +174,40 @@
       location.href = ITEMS_URL;
     }
   });
-  ensureIcon();
-  document.addEventListener('DOMContentLoaded', ensureIcon);
-  window.addEventListener('load', ensureIcon);
-  window.addEventListener('resize', ensureIcon);
-  setInterval(ensureIcon, 2000);
+  function ago(ts) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function render() {
+    const snap = readSnapshot();
+    const parts = ['🎃 ' + ENTRY_LABEL];
+    if (snap && snap.tier) parts.push('Level ' + snap.tier + ' (' + TIERS[snap.tier - 1] + ')');
+    if (snap && typeof snap.treats === 'number') parts.push(snap.treats.toLocaleString() + ' treat' + (snap.treats === 1 ? '' : 's'));
+    let text = parts.join(' · ');
+    if (!snap || (!snap.tier && typeof snap.treats !== 'number')) text += ' · tap to open it and read your level and treats';
+    else {
+      if (typeof snap.treats !== 'number') text += ' · treats: tap to read';
+      if (snap.ts) text += ' · ' + ago(snap.ts);
+    }
+    if (banner.textContent !== text) banner.textContent = text;
+  }
+  function ensureBanner() {
+    const host = document.body || document.documentElement;
+    if (!host) return;
+    if (banner.parentNode !== host || host.firstChild !== banner) host.insertBefore(banner, host.firstChild);
+    render();
+  }
+  ensureBanner();
+  document.addEventListener('DOMContentLoaded', ensureBanner);
+  window.addEventListener('load', ensureBanner);
+  setInterval(ensureBanner, 2000);
+  // On the Items page, keep reading the basket as it loads and as it opens.
+  if (onItems) setInterval(scanBasket, 1500);
 
-  // Arrived from another page via the icon: open the basket now.
+  // Arrived from another page via the banner: open the basket now.
   let flagged = false;
   try { flagged = onItems && sessionStorage.getItem(FLAG) === '1'; sessionStorage.removeItem(FLAG); } catch (e) { flagged = false; }
   if (flagged) openBasket();
