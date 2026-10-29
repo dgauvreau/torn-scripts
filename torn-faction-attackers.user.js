@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Faction Attackers
 // @namespace    torn-faction-attackers
-// @version      1.0
-// @description  On your faction page, adds an "Attackers" button. Tap it to see who has been attacking your faction mates: repeat attackers, which of your mates they hit, their level and faction, results, and a profile link for each. Uses the official API (faction > attacks; needs a key from someone with faction API access).
+// @version      2.0
+// @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -13,17 +13,19 @@
   if (window.top !== window.self) return; // not inside iframes
 
   // ---- settings ----------------------------------------------------------
-  const WINDOWS = [1, 3, 7];                 // day choices shown as buttons
-  const DEFAULT_DAYS = 3;
-  const MAX_PAGES = 8;                       // up to 100 attacks per page
+  const CHAIN_POLL_MS = 10000;             // how often the chain is checked
+  const ATTACK_POLL_MS = 30000;            // how often attacks are re-read while a chain is live or the list is open
+  const RECENT_SEC = 300;                  // "just now" hits: the strip highlights when someone hit in this window
+  const FALLBACK_WINDOW_SEC = 3600;        // "since chain start" falls back to this if the start time isn't known
+  const WINDOWS = [['chain', 'Chain'], [900, '15m'], [3600, '1h'], [86400, '24h']];
+  const MAX_PAGES = 6;                     // up to 100 attacks per page
   const MAX_LISTED = 30;
-  const CACHE_SECONDS = 60;                  // reuse data this long when reopening
 
   // ---- API key -----------------------------------------------------------
   // Own key slot only (never another script's key). Torn PDA fills the placeholder with your key; if that key
-  // can't read faction attacks, the panel offers a shortcut to create one of its own.
+  // can't read faction data, the panel offers a shortcut to create one of its own.
   const OWN_SLOT = 'fa_key';
-  const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&faction=attacks&title=FactionAttackersKey';
+  const KEY_URL = 'https://www.torn.com/preferences.php#tab=api?step=addNewKey&faction=attacks,chain&title=FactionAttackersKey';
   const PDA_KEY = '###PDA-APIKEY###';
   const pdaKey = (PDA_KEY && !PDA_KEY.startsWith('###')) ? PDA_KEY : '';
   function readSlot(s) { try { return localStorage.getItem(s) || ''; } catch (e) { return ''; } }
@@ -39,6 +41,7 @@
     if (s < 86400) return Math.floor(s / 3600) + 'h ago';
     return Math.floor(s / 86400) + 'd ago';
   }
+  const mmss = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
   function el(tag, css, text) {
     const e = document.createElement(tag);
@@ -54,6 +57,7 @@
   function btn(text, onclick, active) {
     const b = el('button', 'margin:0 0 0 6px;padding:3px 10px;background:' + (active ? '#2d5a2d' : '#333') +
       ';color:#ddd;border:1px solid #9d9;border-radius:10px;font:12px sans-serif;', text);
+    b.type = 'button';
     b.addEventListener('click', (e) => { e.stopPropagation(); onclick(b); });
     return b;
   }
@@ -97,12 +101,15 @@
 
   function summarise(attacks) {
     const byAtk = new Map(), byVic = new Map();
-    let hidden = 0, wins = 0;
+    let hidden = 0, wins = 0, recent = 0;
+    const recentAtk = new Set();
+    const cutoff = nowSec() - RECENT_SEC;
     attacks.forEach((a) => {
       const who = a.attacker, vic = a.defender;
       const ts = +a.ended || +a.started || 0;
       const win = isWin(a.result);
       if (win) wins++;
+      if (ts >= cutoff) { recent++; if (who && who.id && !a.is_stealthed) recentAtk.add(who.id); }
       if (vic && vic.id) {
         let v = byVic.get(vic.id);
         if (!v) { v = { id: vic.id, name: vic.name, count: 0, wins: 0, last: 0 }; byVic.set(vic.id, v); }
@@ -122,27 +129,60 @@
     return {
       attackers: Array.from(byAtk.values()).sort(sortFn),
       victims: Array.from(byVic.values()).sort(sortFn),
-      hidden, wins, total: attacks.length, ts: nowSec(),
+      hidden, wins, recent, recentAtk: recentAtk.size, total: attacks.length, ts: nowSec(),
     };
   }
 
   // ---- state -------------------------------------------------------------
-  let days = DEFAULT_DAYS, view = 'attackers';
-  let data = null, dataDays = 0, problem = null, busy = false;
+  let winMode = 'chain', view = 'attackers';
+  let chain = null;            // { current, max, deadline (ms), start (sec) } while a chain is running, else null
+  let chainLoaded = false;
+  let data = null, dataMode = null;
+  let problem = null;          // { code, message } from the last failed call
+  let busyChain = false, busyAtk = false;
+  let lastChain = 0, lastAtk = 0;
 
-  async function refresh(force) {
-    if (busy) return;
-    if (!getKey()) { problem = { code: 'nokey' }; render(); return; }
-    if (!force && data && dataDays === days && nowSec() - data.ts < CACHE_SECONDS) { render(); return; }
-    busy = true; render();
+  const needsKey = () => !getKey() || (problem && (problem.code === 2 || problem.code === 16));
+
+  function windowFrom() {
+    if (winMode === 'chain') return chain && chain.start ? chain.start : nowSec() - FALLBACK_WINDOW_SEC;
+    return nowSec() - winMode;
+  }
+
+  async function fetchChain() {
+    if (busyChain || !getKey() || needsKey()) return;
+    busyChain = true; lastChain = Date.now();
     try {
-      data = summarise(await loadAttacks(nowSec() - days * 86400));
-      dataDays = days;
-      problem = null;
+      const j = await api('faction/chain', { timestamp: nowSec() });
+      const c = (j && (j.chain || j)) || {};
+      let left = +c.timeout || 0;
+      if (!left && c.end) left = (+c.end) - nowSec();
+      chain = (left > 0 && +c.current > 0)
+        ? { current: +c.current, max: +c.max || 0, deadline: Date.now() + left * 1000, start: +c.start || 0 }
+        : null;
+      chainLoaded = true;
+      if (problem && problem.code !== 2 && problem.code !== 16) problem = null;
     } catch (err) {
       problem = { code: err.code, message: err.message };
     }
-    busy = false;
+    busyChain = false;
+    updateStrip();
+  }
+
+  async function fetchAttacks(force) {
+    if (busyAtk || !getKey() || needsKey()) return;
+    if (!force && Date.now() - lastAtk < 3000) return;
+    busyAtk = true; lastAtk = Date.now();
+    if (isOpen()) render();
+    try {
+      data = summarise(await loadAttacks(windowFrom()));
+      dataMode = winMode;
+      if (problem && problem.code !== 2 && problem.code !== 16) problem = null;
+    } catch (err) {
+      problem = { code: err.code, message: err.message };
+    }
+    busyAtk = false;
+    updateStrip();
     render();
   }
 
@@ -150,14 +190,15 @@
   const overlay = el('div', 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(0,0,0,.6);overflow:auto;-webkit-overflow-scrolling:touch;');
   const sheet = el('div', 'margin:40px auto;padding:10px 12px;background:#1a1a1a;color:#ccc;width:92%;max-width:480px;box-sizing:border-box;border:1px solid #777;border-radius:8px;font:13px sans-serif;line-height:1.5;');
   overlay.appendChild(sheet);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-  function close() { overlay.style.display = 'none'; }
-  function open() {
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closePanel(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
+  const isOpen = () => overlay.style.display === 'block';
+  function closePanel() { overlay.style.display = 'none'; }
+  function openPanel() {
     (document.body || document.documentElement).appendChild(overlay);
     overlay.style.display = 'block';
     render();
-    refresh(false);
+    if (getKey() && !needsKey()) { fetchChain(); fetchAttacks(true); }
   }
 
   const keyInput = el('input', 'display:block;margin:6px auto;width:90%;max-width:320px;padding:4px 8px;background:#111;color:#eee;border:1px solid #777;border-radius:6px;font:12px monospace;box-sizing:border-box;');
@@ -174,7 +215,9 @@
     try { localStorage.setItem(OWN_SLOT, ownKey); } catch (e) {}
     keyInput.value = '';
     problem = null;
-    refresh(true);
+    fetchChain();
+    fetchAttacks(true);
+    render();
   }
   keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitKey(); });
 
@@ -183,21 +226,22 @@
     box.appendChild(el('div', '', msg));
     box.appendChild(link(KEY_URL, '1. Create the key on Torn (settings pre-filled)',
       'display:inline-block;margin:8px 0;padding:4px 12px;background:#2d5a2d;color:#fff;border:1px solid #9d9;border-radius:12px;text-decoration:none;font:12px sans-serif;'));
-    box.appendChild(el('div', 'font-size:11px;color:#aaa;', 'The key must belong to someone with faction API access. Press Create, copy the key, come back and paste it.'));
+    box.appendChild(el('div', 'font-size:11px;color:#aaa;', 'The key must belong to someone with faction API access (faction > chain and attacks). Press Create, copy the key, come back and paste it.'));
     box.appendChild(keyInput);
     box.appendChild(btn('Save key', submitKey));
     return box;
   }
 
   // ---- copy --------------------------------------------------------------
+  const winLabel = () => (WINDOWS.find((w) => w[0] === winMode) || ['', ''])[1];
   function listText() {
-    const head = 'Faction attackers (last ' + days + (days === 1 ? ' day' : ' days') + ')';
+    const head = 'Faction attackers (' + (winMode === 'chain' ? 'since chain start' : 'last ' + winLabel()) + ')';
     if (view === 'victims') {
-      return [head + ' - by faction mate'].concat(data.victims.map((v) => v.name + ' [' + v.id + '] - hit ' + v.count + 'x (' + v.wins + ' lost the fight)')).join('\n');
+      return [head + ' - by faction mate'].concat(data.victims.map((v) => v.name + ' [' + v.id + '] - hit ' + v.count + 'x (' + v.wins + ' landed)')).join('\n');
     }
     const blocks = data.attackers.map((e) =>
       e.name + ' [' + e.id + '] - ' + e.count + 'x on ' + Array.from(e.victims.values()).join(', ') + '\nLvl ' + e.level +
-      (e.faction ? ' \u00b7 ' + e.faction : '') + ' \u00b7 last: ' + (e.lastResult || '?') + ' ' + ago(e.last) + '\n' + profileUrl(e.id));
+      (e.faction ? ' · ' + e.faction : '') + ' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last) + '\n' + profileUrl(e.id));
     const parts = [head].concat(blocks);
     if (data.hidden) parts.push(data.hidden + ' anonymous not shown');
     return parts.join('\n\n');
@@ -208,8 +252,9 @@
     setTimeout(() => { if (b.isConnected) b.textContent = old; }, 1800);
   }
   async function copyList(b) {
+    if (!data) return;
     const text = listText();
-    try { await navigator.clipboard.writeText(text); flash(b, '\u2713'); return; } catch (e) {}
+    try { await navigator.clipboard.writeText(text); flash(b, '✓'); return; } catch (e) {}
     try {
       const ta = el('textarea', 'position:fixed;top:0;left:0;opacity:0;');
       ta.value = text;
@@ -217,7 +262,7 @@
       ta.focus(); ta.select();
       const ok = document.execCommand('copy');
       ta.remove();
-      if (ok) { flash(b, '\u2713'); return; }
+      if (ok) { flash(b, '✓'); return; }
     } catch (e) {}
     const ta = el('textarea', 'display:block;width:100%;height:120px;margin-top:8px;background:#111;color:#eee;border:1px solid #777;border-radius:6px;font:11px monospace;box-sizing:border-box;');
     ta.value = text; ta.readOnly = true;
@@ -226,43 +271,48 @@
 
   // ---- render ------------------------------------------------------------
   function render() {
-    if (overlay.style.display !== 'block') return;
+    if (!isOpen()) return;
     sheet.textContent = '';
     const head = el('div', 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;');
-    head.appendChild(el('b', 'font-size:14px;color:#fff;', '\ud83d\udee1 Faction attackers'));
-    const x = el('span', 'padding:0 6px;font-size:20px;cursor:pointer;color:#aaa;', '\u00d7');
-    x.addEventListener('click', close);
+    head.appendChild(el('b', 'font-size:14px;color:#fff;', '🛡 Faction attackers'));
+    const x = el('span', 'padding:0 6px;font-size:20px;cursor:pointer;color:#aaa;', '×');
+    x.addEventListener('click', closePanel);
     head.appendChild(x);
     sheet.appendChild(head);
 
-    if (problem && problem.code === 'nokey') { sheet.appendChild(setupBlock('This needs an API key with faction attacks access.')); return; }
+    if (!getKey()) { sheet.appendChild(setupBlock('This needs an API key with faction access.')); return; }
     if (problem && problem.code === 2) { sheet.appendChild(setupBlock('Torn didn\'t accept the key. Make a new one:')); return; }
-    if (problem && problem.code === 16) { sheet.appendChild(setupBlock('This key can\'t read faction attacks (needs faction API access). Make a key of its own:')); return; }
+    if (problem && problem.code === 16) { sheet.appendChild(setupBlock('This key can\'t read faction chain/attacks (needs faction API access). Make a key of its own:')); return; }
 
-    // controls: day window and view
+    // chain status line
+    const left = chain ? Math.max(0, Math.ceil((chain.deadline - Date.now()) / 1000)) : 0;
+    sheet.appendChild(el('div', 'margin-bottom:6px;color:' + (chain ? (left < 60 ? '#ff5b5b' : '#9d9') : '#888') + ';font-weight:bold;',
+      chain ? 'Chain ' + chain.current + (chain.max ? '/' + chain.max : '') + ' · ' + mmss(left) + ' left' : (chainLoaded ? 'No live chain' : 'Checking chain…')));
+
+    // controls: window and view
     const ctl = el('div', 'display:flex;flex-wrap:wrap;gap:4px 0;align-items:center;margin-bottom:8px;');
-    ctl.appendChild(el('span', 'color:#888;', 'Last'));
-    WINDOWS.forEach((d) => ctl.appendChild(btn(d + 'd', () => { days = d; refresh(false); }, d === days)));
+    WINDOWS.forEach((w) => ctl.appendChild(btn(w[1], () => { winMode = w[0]; data = null; render(); fetchAttacks(true); }, w[0] === winMode)));
     ctl.appendChild(el('span', 'width:10px;'));
     ctl.appendChild(btn('By attacker', () => { view = 'attackers'; render(); }, view === 'attackers'));
     ctl.appendChild(btn('By mate', () => { view = 'victims'; render(); }, view === 'victims'));
     sheet.appendChild(ctl);
 
-    if (problem && problem.code === 5) sheet.appendChild(el('div', 'color:#fc6;', 'Rate limited - try again in a minute.'));
+    if (problem && problem.code === 5) sheet.appendChild(el('div', 'color:#fc6;', 'Rate limited - retrying shortly.'));
     else if (problem) sheet.appendChild(el('div', 'color:#f88;', 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
 
-    if (!data || dataDays !== days) { sheet.appendChild(el('div', '', busy ? 'Loading\u2026' : 'No data yet.')); return; }
+    if (!data || dataMode !== winMode) { sheet.appendChild(el('div', '', busyAtk ? 'Loading…' : 'No data yet.')); return; }
 
     sheet.appendChild(el('div', 'color:#aaa;margin-bottom:6px;',
-      data.total + ' attacks on your faction \u00b7 ' + data.wins + ' went the attacker\'s way \u00b7 ' + data.attackers.length + ' known attackers'));
+      data.total + ' attacks on your faction · ' + data.wins + ' landed · ' + data.attackers.length + ' known attackers' +
+      (data.recent ? ' · ' + data.recent + ' in the last ' + Math.round(RECENT_SEC / 60) + 'm' : '')));
 
     if (view === 'victims') {
       if (!data.victims.length) sheet.appendChild(el('div', '', 'No attacks on your faction in this window.'));
       data.victims.slice(0, MAX_LISTED).forEach((v, i) => {
         const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
         row.appendChild(link(profileUrl(v.id), v.name + ' [' + v.id + ']', 'color:#7cf;'));
-        row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  \u00d7' + v.count));
-        row.appendChild(el('div', 'color:#bbb;', v.wins + ' hit(s) landed \u00b7 last ' + ago(v.last)));
+        row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  ×' + v.count));
+        row.appendChild(el('div', 'color:#bbb;', v.wins + ' hit(s) landed · last ' + ago(v.last)));
         sheet.appendChild(row);
       });
     } else {
@@ -270,36 +320,72 @@
       data.attackers.slice(0, MAX_LISTED).forEach((e, i) => {
         const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
         row.appendChild(link(profileUrl(e.id), e.name + ' [' + e.id + ']', 'color:#7cf;'));
-        if (e.count > 1) row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  \ud83d\udd01 \u00d7' + e.count));
-        row.appendChild(el('div', 'color:#bbb;', 'Lvl ' + e.level + (e.faction ? ' \u00b7 ' + e.faction : ' \u00b7 no faction') +
-          ' \u00b7 last: ' + (e.lastResult || '?') + ' ' + ago(e.last)));
+        if (e.count > 1) row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  🔁 ×' + e.count));
+        row.appendChild(el('div', 'color:#bbb;', 'Lvl ' + e.level + (e.faction ? ' · ' + e.faction : ' · no faction') +
+          ' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last)));
         row.appendChild(el('div', 'color:#999;font-size:12px;', 'Hit: ' + Array.from(e.victims.values()).join(', ')));
         sheet.appendChild(row);
       });
-      if (data.attackers.length > MAX_LISTED) sheet.appendChild(el('div', 'margin-top:6px;color:#888;', '\u2026and ' + (data.attackers.length - MAX_LISTED) + ' more'));
+      if (data.attackers.length > MAX_LISTED) sheet.appendChild(el('div', 'margin-top:6px;color:#888;', '…and ' + (data.attackers.length - MAX_LISTED) + ' more'));
     }
 
     const foot = el('div', 'margin-top:10px;padding-top:6px;border-top:1px solid #444;font-size:11px;color:#888;display:flex;justify-content:space-between;align-items:center;');
-    foot.appendChild(el('span', 'flex:1;min-width:0;', 'Updated ' + ago(data.ts) + (data.hidden ? ' \u00b7 ' + data.hidden + ' anonymous not shown' : '')));
+    foot.appendChild(el('span', 'flex:1;min-width:0;', 'Updated ' + ago(data.ts) + ' · refreshes itself' + (data.hidden ? ' · ' + data.hidden + ' anonymous not shown' : '')));
     const acts = el('span', 'flex:none;white-space:nowrap;margin-left:8px;');
-    acts.appendChild(btn('\ud83d\udccb', copyList));
-    acts.appendChild(btn(busy ? '\u2026' : '\ud83d\udd04', () => refresh(true)));
+    acts.appendChild(btn('📋', copyList));
+    acts.appendChild(btn(busyAtk ? '…' : '🔄', () => fetchAttacks(true)));
     foot.appendChild(acts);
     sheet.appendChild(foot);
   }
 
-  // ---- launcher button (faction page only) ------------------------------
-  const onFactionPage = () => /\/factions\.php/i.test(location.pathname);
-  const launcher = el('button', 'position:fixed;right:10px;bottom:70px;z-index:2147483646;padding:7px 14px;background:#2a2a2a;color:#ddd;border:1px solid #9d9;border-radius:14px;font:bold 13px sans-serif;cursor:pointer;', '\ud83d\udee1 Attackers');
-  launcher.type = 'button';
-  launcher.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); });
-  function ensureLauncher() {
-    if (!onFactionPage()) { if (launcher.parentNode) launcher.remove(); return; }
+  // ---- live strip --------------------------------------------------------
+  // Shows on the faction page and the targets list. Visible only while a chain is live (or when a key is needed).
+  const onWatchedPage = () =>
+    /\/factions\.php/i.test(location.pathname) ||
+    (/page\.php/i.test(location.pathname) && /[?&]sid=list/.test(location.search) && /[?&]type=targets/.test(location.search));
+  const strip = el('div', 'display:none;position:fixed;left:10px;bottom:56px;z-index:2147483646;max-width:92vw;padding:6px 12px;' +
+    'border-radius:14px;background:#1a1a1a;border:1px solid #555;font:bold 13px sans-serif;color:#fff;cursor:pointer;');
+  strip.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openPanel(); });
+
+  function updateStrip() {
+    if (!onWatchedPage()) { if (strip.parentNode) strip.remove(); return; }
     const host = document.body || document.documentElement;
-    if (host && launcher.parentNode !== host) host.appendChild(launcher);
+    if (host && strip.parentNode !== host) host.appendChild(strip);
+    let text = '', border = '#555', color = '#fff';
+    if (needsKey()) {
+      text = '🛡 Attackers: key needed (tap)'; color = '#fc6';
+    } else if (chain) {
+      const left = Math.max(0, Math.ceil((chain.deadline - Date.now()) / 1000));
+      text = '🛡 Chain ' + chain.current + (chain.max ? '/' + chain.max : '') + ' · ' + mmss(left);
+      if (left < 60) color = '#ff5b5b';
+      if (data) {
+        // The strip's own numbers always cover the last RECENT_SEC window, whatever the panel's window is.
+        text += ' · ' + (data.recent ? '⚠ ' + data.recent + ' hit' + (data.recent === 1 ? '' : 's') + ' on mates (' + Math.round(RECENT_SEC / 60) + 'm)' : 'no recent hits on mates');
+        if (data.recent) border = '#f88';
+        else border = '#9d9';
+      }
+      if (problem && problem.code === 5) text += ' · rate limited';
+    }
+    if (!text) { strip.style.display = 'none'; return; }
+    if (strip.textContent !== text) strip.textContent = text;
+    strip.style.color = color;
+    strip.style.borderColor = border;
+    strip.style.display = 'block';
   }
-  ensureLauncher();
-  document.addEventListener('DOMContentLoaded', ensureLauncher);
-  window.addEventListener('load', ensureLauncher);
-  setInterval(ensureLauncher, 1500);
+
+  // ---- loop --------------------------------------------------------------
+  function tick() {
+    updateStrip();
+    if (isOpen() && chain) render(); // keep the panel's chain timer ticking
+    if (document.visibilityState === 'hidden' || !onWatchedPage() || !getKey() || needsKey()) return;
+    if (Date.now() - lastChain >= CHAIN_POLL_MS) fetchChain();
+    // Attacks are only read while a chain is live or the list is open, and not more often than ATTACK_POLL_MS.
+    if ((chain || isOpen()) && Date.now() - lastAtk >= ATTACK_POLL_MS) fetchAttacks(false);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { lastChain = 0; lastAtk = 0; tick(); }
+  });
+  updateStrip();
+  tick();
+  setInterval(tick, 1000);
 })();
