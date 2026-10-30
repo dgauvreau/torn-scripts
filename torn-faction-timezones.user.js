@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.1
+// @version      3.2
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -280,6 +280,7 @@
   // ---- state -------------------------------------------------------------
   let data = null;      // { tid, ts, postCount, capped, members }
   let panelOpen = false;
+  let shareOpen = false;
   let problem = null;   // { code, message }
   let busy = false, progressN = 0;
   let overrides = {};
@@ -525,6 +526,26 @@
     const a = Math.abs(off), h = Math.floor(a / 60), mm = a % 60;
     return h + (mm ? ':' + String(mm).padStart(2, '0') : '') + 'h ' + (off < 0 ? 'behind' : 'ahead of') + ' Torn';
   }
+  // Plain text for pasting into a forum post: one line per zone, west to east.
+  function shareTextOf(known) {
+    const groups = { 0: [] };
+    known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
+    const lines = ['Faction time zones (Torn time = UTC)', ''];
+    Object.keys(groups).map(Number).sort((a, b) => a - b).forEach((off) => {
+      const g = groups[off].map((m) => m.name).sort((x, y) => (x.toLowerCase() < y.toLowerCase() ? -1 : 1));
+      const tag = off === 0 ? 'UTC±0 (Torn time)' : offText(off) + ' (' + behind(off) + ')';
+      if (!g.length && off !== 0) return;
+      lines.push(tag + ': ' + (g.length ? g.join(', ') : '-'));
+    });
+    return lines.join('\n');
+  }
+  function copyText(text, box) {
+    let ok = false;
+    try { box.focus(); box.select(); box.setSelectionRange(0, text.length); ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    if (!ok) { try { navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; } }
+    return ok;
+  }
+
   function zoneCards(known) {
     const groups = { 0: [] };
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
@@ -590,6 +611,21 @@
     if (known.length) {
       sheet.appendChild(el('div', 'color:#fff;', known.length + ' members in ' + (new Set(known.map((m) => m.off))).size + ' time zones'));
       sheet.appendChild(zoneCards(known));
+      const shareRow = el('div', 'margin:0 0 6px;');
+      const shareBtn = btn('\ud83d\udccb Copy as text to share', () => { shareOpen = !shareOpen; render(); }, 'Copy as text');
+      shareBtn.style.marginLeft = '0';
+      shareRow.appendChild(shareBtn);
+      if (shareOpen) {
+        const txt = shareTextOf(known);
+        const box = document.createElement('textarea');
+        box.readOnly = true; box.value = txt; box.rows = Math.min(14, txt.split('\n').length + 1);
+        box.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin-top:6px;background:#111;color:#ddd;border:1px solid #555;border-radius:6px;font:12px monospace;padding:6px;';
+        shareRow.appendChild(box);
+        const note = el('div', 'font-size:11px;color:#9d9;margin-top:3px;', '');
+        shareRow.appendChild(note);
+        setTimeout(() => { note.textContent = copyText(txt, box) ? 'Copied - paste it into your post.' : 'Press and hold in the box, choose Select All, then Copy.'; }, 30);
+      }
+      sheet.appendChild(shareRow);
 
       // grouped list, west to east
       const groups = {};
