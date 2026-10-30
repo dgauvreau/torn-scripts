@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.8
+// @version      2.9
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -535,26 +535,37 @@
     const groups = {};
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
     const offs = Object.keys(groups).map(Number).sort((x, y) => x - y);
-    const n = Math.max(1, offs.length), colW = 360 / n;
-    const fs = Math.max(3.6, Math.min(6.6, colW / 6.4));          // name size shrinks when there are many zones
+    const n = Math.max(1, offs.length);
+    // Only the part of the world that has members is shown: crop sideways to the occupied zones and up/down to where the dots sit.
+    const pos = offs.map((off) => { const lon = Math.max(-180, Math.min(180, off / 60 * 15)); return { off: off, x: lon + 180, y: 90 - landLat(lon) }; });
+    let x0 = Math.min.apply(null, pos.map((q) => q.x)) - 22, x1 = Math.max.apply(null, pos.map((q) => q.x)) + 22;
+    if (x1 - x0 < 150) { const c = (x0 + x1) / 2; x0 = c - 75; x1 = c + 75; }
+    x0 = Math.max(0, x0); x1 = Math.min(360, x1);
+    const W = x1 - x0;
+    const y0 = Math.max(0, Math.min.apply(null, pos.map((q) => q.y)) - 30);
+    const y1 = Math.min(180, Math.max.apply(null, pos.map((q) => q.y)) + 28);
+    const colW = W / n;
+    const fs = Math.max(3.6, Math.min(8, colW / 6.4, 6.6 * W / 360 * 1.3));
     const maxChars = Math.max(4, Math.floor(colW / (fs * 0.62)));
     const rowH = fs + 2.6;
     let most = 1; offs.forEach((o) => { most = Math.max(most, groups[o].length); });
-    const H = 198 + most * rowH + 4;
-    const svg = mk('svg', { viewBox: '0 0 360 ' + H, width: '100%' });
+    const labTop = y1 + 12;
+    const H = labTop + 12 + most * rowH + 2;
+    const svg = mk('svg', { viewBox: x0 + ' ' + y0 + ' ' + W + ' ' + (H - y0), width: '100%' });
     svg.style.cssText = 'display:block;width:100%;height:auto;background:#10202e;border-radius:6px;margin:6px 0;';
-    for (let o = -12; o <= 14; o++) svg.appendChild(mk('line', { x1: o * 15 + 180, y1: 0, x2: o * 15 + 180, y2: 180, stroke: '#2a3f52', 'stroke-width': 0.4 }));
+    svg.appendChild(mk('rect', { x: x0, y: y0, width: W, height: H - y0, fill: '#10202e' }));
+    for (let o = -12; o <= 14; o++) svg.appendChild(mk('line', { x1: o * 15 + 180, y1: y0, x2: o * 15 + 180, y2: y1, stroke: '#2a3f52', 'stroke-width': 0.4 }));
     LAND.forEach((poly) => svg.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + (90 - q[1])).join(' '), fill: '#2e4a3a', stroke: '#4a6b57', 'stroke-width': 0.5 })));
-    offs.forEach((off, i) => {
-      const lon = Math.max(-180, Math.min(180, off / 60 * 15));
-      const x = lon + 180, y = 90 - landLat(lon), cx = colW * i + colW / 2;
-      svg.appendChild(mk('line', { x1: x, y1: y, x2: cx, y2: 187, stroke: '#f5b942', 'stroke-width': 0.5, 'stroke-opacity': 0.7 }));
-      svg.appendChild(mk('circle', { cx: x, cy: y, r: 2.6, fill: '#f5b942', stroke: '#fff', 'stroke-width': 0.6 }));
-      const t0 = mk('text', { x: cx, y: 186, 'text-anchor': 'middle', 'font-size': Math.min(6, fs), fill: '#7a9bb5' });
-      t0.textContent = 'UTC' + (off > 0 ? '+' : off < 0 ? '−' : '') + (Math.abs(off) % 60 ? (off / 60).toFixed(1) : Math.abs(off) / 60);
+    svg.appendChild(mk('rect', { x: x0, y: y1, width: W, height: H - y1, fill: '#10202e' }));
+    pos.forEach((q, i) => {
+      const off = q.off, cx = x0 + colW * i + colW / 2;
+      svg.appendChild(mk('line', { x1: q.x, y1: q.y, x2: cx, y2: labTop - 1, stroke: '#f5b942', 'stroke-width': 0.5, 'stroke-opacity': 0.7 }));
+      svg.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 2.6, fill: '#f5b942', stroke: '#fff', 'stroke-width': 0.6 }));
+      const t0 = mk('text', { x: cx, y: labTop + 6, 'text-anchor': 'middle', 'font-size': Math.min(6.4, fs), fill: '#7a9bb5' });
+      t0.textContent = 'UTC' + (off > 0 ? '+' : off < 0 ? '−' : '') + (Math.abs(off) % 60 ? (Math.abs(off) / 60).toFixed(1) : Math.abs(off) / 60);
       svg.appendChild(t0);
-      groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1)).forEach((m, j) => {
-        const t = mk('text', { x: cx, y: 198 + j * rowH, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 'bold', fill: '#ffe9b0' });
+      groups[off].slice().sort((p, r) => (p.name.toLowerCase() < r.name.toLowerCase() ? -1 : 1)).forEach((m, j) => {
+        const t = mk('text', { x: cx, y: labTop + 6 + rowH * (j + 1), 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 'bold', fill: '#ffe9b0' });
         t.textContent = m.name.length > maxChars ? m.name.slice(0, maxChars - 1) + '…' : m.name;
         svg.appendChild(t);
       });
