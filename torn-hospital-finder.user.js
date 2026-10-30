@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.57
+// @version      6.58
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.57"
+const VERSION="6.58"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -208,7 +208,13 @@ panel.textContent="Rescanning\u2026"
 location.href=HOSPITAL_URL+"?rescan="+Date.now()}const boxes={}
 let countEl=null
 let statusEl=null
-let dgEl=null
+let listEl=null
+function reorderBoxes(){if(!listEl)return
+const rows=[...listEl.children]
+const lv=r=>typeof r.lvlNum==="number"?r.lvlNum:-1
+const ts=r=>typeof r.lastTs==="number"?r.lastTs:Infinity
+const sorted=rows.map((r,i)=>({r:r,i:i})).sort((a,b)=>lv(b.r)-lv(a.r)||ts(a.r)-ts(b.r)||a.i-b.i).map(x=>x.r)
+if(sorted.some((r,i)=>r!==rows[i]))sorted.forEach(r=>listEl.appendChild(r))}let dgEl=null
 let diagOpen=false
 function diagText(){if(!diagOpen)return"Details \u25b8"
 return"Details \u25be  "+pageNote+" \xb7 "+kept.size+" found \xb7 v"+VERSION+" \xb7 "+diag+" \xb7 my level: "+(myLevel===null?"unknown":myLevel)}function looksLoading(){const pg=pageInfo()
@@ -237,12 +243,13 @@ const p=cache[t.id]
 if(excluded(p)){box.remove()
 updateCount()
 return}const ok=p&&typeof p==="object"
-if(box.lvlEl&&t.lvl===null&&ok&&typeof p.level==="number")box.lvlEl.textContent=p.level
+if(box.lvlEl&&t.lvl===null&&ok&&typeof p.level==="number"){box.lvlEl.textContent=p.level
+box.lvlNum=p.level}if(ok&&p.last_action&&typeof p.last_action.timestamp==="number")box.lastTs=p.last_action.timestamp
 if(box.lifeEl){box.lifeEl.textContent=ok&&p.life&&p.life.current!=null?Number(p.life.current).toLocaleString():p==="error"||ok?"?":"\u2026"}if(box.timeEl){const left=ok?apiLeft(p):null
 box.timeEl.textContent="out in "+fmtLeft(left!==null?Math.max(0,left):t.secs)}if(box.seenEl){const la=ok&&p.last_action
 if(la&&la.relative){box.seenEl.textContent="seen "+la.relative.replace(/\s*seconds?/i,"s").replace(/\s*minutes?/i,"m").replace(/\s*hours?/i,"h").replace(/\s*days?/i,"d")
-box.seenEl.style.color=la.status==="Online"?"#fc6":""}else{box.seenEl.textContent=p==="error"||ok?"seen ?":""}}if(box.facEl){if(ok&&p.faction&&+p.faction.faction_id===0){
-box.facEl.textContent="\u2713 None"
+box.seenEl.style.color=la.status==="Online"?"#fc6":""}else{box.seenEl.textContent=p==="error"||ok?"seen ?":""}}reorderBoxes()
+if(box.facEl){if(ok&&p.faction&&+p.faction.faction_id===0){box.facEl.textContent="\u2713 None"
 box.facEl.style.color="#7c7"}else if(p==="error"||ok&&!p.faction){box.facEl.textContent="?"
 box.facEl.style.color="#fc6"}}}function render(targets,when){panel.style.display="block"
 panel.textContent=""
@@ -318,6 +325,7 @@ return}none.innerHTML="<i>None found</i>"+(shortestOnPage===null?" - the page sh
 panel.appendChild(none)
 updateCount()
 return}const list=document.createElement("div")
+listEl=list
 list.style.cssText="margin-top:10px;"
 targets.forEach(t=>{const row=document.createElement("div")
 row.style.cssText="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(128,128,128,.4);"
@@ -365,6 +373,7 @@ atk.style.cssText="flex:none;padding:6px 12px;color:inherit;border:1px solid rgb
 row.appendChild(prof)
 row.appendChild(atk)
 row.lvlEl=lvlEl
+row.lvlNum=t.lvl
 row.lifeEl=lifeEl
 row.facEl=facEl
 row.timeEl=timeEl
@@ -474,7 +483,7 @@ stepWalk(pg,sigNow)
 diag+=walkDiag()
 found.sort((a,b)=>{if(!USE_LEVEL_LIMIT)return a.secs-b.secs
 if(a.lvl===null!==(b.lvl===null))return a.lvl===null?1:-1
-if(a.lvl!==b.lvl)return a.lvl-b.lvl
+if(a.lvl!==b.lvl)return b.lvl-a.lvl
 return a.secs-b.secs})
 found=found.slice(0,MAX_LOOKUPS)
 const sig=minLevel()+"-"+limitLevel()+":"+found.map(t=>t.id).join(",")+(found.length?"":looksLoading()?"|loading":"|none")

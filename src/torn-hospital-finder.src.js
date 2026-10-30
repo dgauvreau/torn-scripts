@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.57
+// @version      6.58
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.57';
+  const VERSION = '6.58';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -384,6 +384,16 @@
   const boxes = {};
   let countEl = null;
   let statusEl = null;
+  let listEl = null;
+  // Highest level first; within a level, the one seen longest ago first (people with no last-seen info go last).
+  function reorderBoxes() {
+    if (!listEl) return;
+    const rows = [...listEl.children];
+    const lv = (r) => (typeof r.lvlNum === 'number' ? r.lvlNum : -1);
+    const ts = (r) => (typeof r.lastTs === 'number' ? r.lastTs : Infinity);
+    const sorted = rows.map((r, i) => ({ r, i })).sort((a, b) => (lv(b.r) - lv(a.r)) || (ts(a.r) - ts(b.r)) || (a.i - b.i)).map((x) => x.r);
+    if (sorted.some((r, i) => r !== rows[i])) sorted.forEach((r) => listEl.appendChild(r));
+  }
   let dgEl = null;
   let diagOpen = false;
   function diagText() {
@@ -437,7 +447,8 @@
     const p = cache[t.id];
     if (excluded(p)) { box.remove(); updateCount(); return; }
     const ok = p && typeof p === 'object';
-    if (box.lvlEl && t.lvl === null && ok && typeof p.level === 'number') box.lvlEl.textContent = p.level;
+    if (box.lvlEl && t.lvl === null && ok && typeof p.level === 'number') { box.lvlEl.textContent = p.level; box.lvlNum = p.level; }
+    if (ok && p.last_action && typeof p.last_action.timestamp === 'number') box.lastTs = p.last_action.timestamp;
     if (box.lifeEl) {
       box.lifeEl.textContent = ok && p.life && p.life.current != null ? Number(p.life.current).toLocaleString() : (p === 'error' || ok ? '?' : '…');
     }
@@ -453,6 +464,7 @@
         box.seenEl.style.color = la.status === 'Online' ? '#fc6' : '';
       } else { box.seenEl.textContent = p === 'error' || ok ? 'seen ?' : ''; }
     }
+    reorderBoxes();
     if (box.facEl) {
       if (ok && p.faction && +p.faction.faction_id === 0) { box.facEl.textContent = '✓ None'; box.facEl.style.color = '#7c7'; }
       else if (p === 'error' || (ok && !p.faction)) { box.facEl.textContent = '?'; box.facEl.style.color = '#fc6'; }
@@ -545,6 +557,7 @@
     // One card per target: the name (big, tap anywhere on the left to open the profile) with the details under
     // it, and a small Attack button on the right.
     const list = document.createElement('div');
+    listEl = list;
     list.style.cssText = 'margin-top:10px;';
     targets.forEach((t) => {
       const row = document.createElement('div');
@@ -590,6 +603,7 @@
       row.appendChild(prof);
       row.appendChild(atk);
       row.lvlEl = lvlEl;
+      row.lvlNum = t.lvl;
       row.lifeEl = lifeEl;
       row.facEl = facEl;
       row.timeEl = timeEl;
@@ -795,11 +809,11 @@
     diag += ' · saved: ' + kept.size + (USE_LEVEL_LIMIT ? ' · levels ' + minLevel() + '–' + limitLevel() + ': ' + found.length : '');
     stepWalk(pg, sigNow); // may open the previous page if there are still too few matches
     diag += walkDiag();
-    // Lowest level first when the level limit is on, otherwise soonest out first.
+    // Highest level first when the level limit is on (then, once details arrive, longest since last seen), otherwise soonest out first.
     found.sort((a, b) => {
       if (!USE_LEVEL_LIMIT) return a.secs - b.secs;
       if ((a.lvl === null) !== (b.lvl === null)) return a.lvl === null ? 1 : -1;
-      if (a.lvl !== b.lvl) return a.lvl - b.lvl;
+      if (a.lvl !== b.lvl) return b.lvl - a.lvl; // highest level first
       return a.secs - b.secs;
     });
     found = found.slice(0, MAX_LOOKUPS);
