@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.0
+// @version      3.1
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -520,26 +520,33 @@
     const h12 = h % 12 === 0 ? 12 : h % 12;
     return h12 + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? 'am' : 'pm');
   }
+  function behind(off) {
+    if (off === 0) return 'Torn time';
+    const a = Math.abs(off), h = Math.floor(a / 60), mm = a % 60;
+    return h + (mm ? ':' + String(mm).padStart(2, '0') : '') + 'h ' + (off < 0 ? 'behind' : 'ahead of') + ' Torn';
+  }
   function zoneCards(known) {
     const groups = { 0: [] };
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
     const offs = Object.keys(groups).map(Number).sort((x, y) => x - y);
-    const wrap = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:6px;margin:8px 0;');
+    // a left-to-right strip, west to east, that scrolls sideways when there are more zones than fit
+    const strip = el('div', 'display:flex;flex-direction:row;gap:4px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:8px 0;padding-bottom:4px;');
+    let tornCard = null;
     offs.forEach((off) => {
       const torn = off === 0;
       const g = groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1));
-      const card = el('div', 'box-sizing:border-box;border-radius:8px;padding:6px 8px;' + (torn ? 'background:#3a2e10;border:2px solid #f5b942;' : 'background:#1c2733;border:1px solid #3a4a5a;'));
-      const head = el('div', 'display:flex;align-items:baseline;justify-content:space-between;gap:6px;');
-      head.appendChild(el('span', 'font-size:15px;font-weight:bold;color:' + (torn ? '#f5b942' : '#fff') + ';', offText(off)));
-      head.appendChild(el('span', 'font-size:11px;color:#9ab;', g.length ? String(g.length) : ''));
-      card.appendChild(head);
-      if (torn) card.appendChild(el('div', 'font-size:10px;font-weight:bold;letter-spacing:.5px;color:#f5b942;', 'TORN TIME (TCT)'));
-      card.appendChild(el('div', 'font-size:10px;color:#8aa;margin-bottom:3px;', 'Torn 00:00 = ' + localAtMidnight(off)));
+      const card = el('div', 'flex:1 0 92px;box-sizing:border-box;border-radius:8px;padding:6px 6px;text-align:center;' + (torn ? 'background:#3a2e10;border:2px solid #f5b942;' : 'background:#1c2733;border:1px solid #3a4a5a;'));
+      card.appendChild(el('div', 'font-size:16px;font-weight:bold;color:' + (torn ? '#f5b942' : '#fff') + ';', off === 0 ? '±0' : (off < 0 ? '−' : '+') + Math.floor(Math.abs(off) / 60) + (Math.abs(off) % 60 ? ':' + String(Math.abs(off) % 60).padStart(2, '0') : '')));
+      card.appendChild(el('div', 'font-size:10px;font-weight:bold;color:' + (torn ? '#f5b942' : '#9cf') + ';', torn ? 'TORN TIME · UTC' : behind(off)));
+      card.appendChild(el('div', 'font-size:10px;color:#8aa;margin-bottom:4px;', 'midnight = ' + localAtMidnight(off)));
       if (!g.length) card.appendChild(el('div', 'font-size:11px;color:#778;', 'nobody'));
       g.forEach((m) => card.appendChild(el('div', 'font-size:12px;color:#ffe9b0;word-break:break-word;', m.name)));
-      wrap.appendChild(card);
+      if (g.length) card.appendChild(el('div', 'font-size:10px;color:#789;margin-top:3px;', g.length + (g.length === 1 ? ' member' : ' members')));
+      if (torn) tornCard = card;
+      strip.appendChild(card);
     });
-    return wrap;
+    if (tornCard) setTimeout(() => { try { strip.scrollLeft = Math.max(0, tornCard.offsetLeft - (strip.clientWidth - tornCard.offsetWidth) / 2); } catch (e) {} }, 50);
+    return strip;
   }
 
   function render() {
