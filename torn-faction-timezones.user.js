@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      2.9
+// @version      3.0
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -509,68 +509,37 @@
     refresh();
   }
 
-  // ---- world map -----------------------------------------------------------
-  const LAND = [
-    [[-168,66],[-140,70],[-95,72],[-80,63],[-62,58],[-55,50],[-67,44],[-76,35],[-81,25],[-97,26],[-105,20],[-95,16],[-83,9],[-80,8],[-87,14],[-105,22],[-115,30],[-124,40],[-125,49],[-135,58],[-150,60],[-165,60]],
-    [[-55,60],[-45,60],[-20,70],[-20,82],[-60,82],[-72,76]],
-    [[-80,8],[-60,10],[-50,0],[-35,-5],[-40,-22],[-58,-38],[-68,-55],[-74,-50],[-72,-30],[-80,-5]],
-    [[-10,36],[-9,43],[0,50],[5,58],[10,64],[25,71],[40,68],[40,45],[28,41],[20,38],[12,38],[3,43]],
-    [[-17,21],[-10,35],[10,37],[32,31],[43,12],[51,11],[40,-15],[33,-27],[20,-35],[12,-17],[9,4],[-8,4],[-17,14]],
-    [[28,41],[40,45],[40,68],[70,73],[110,77],[170,70],[180,65],[160,55],[140,45],[130,35],[122,30],[120,22],[108,10],[100,3],[98,15],[90,22],[80,8],[72,20],[58,24],[50,28],[44,12],[35,30],[28,36]],
-    [[114,-22],[130,-12],[142,-11],[153,-27],[146,-39],[135,-35],[115,-34]],
-    [[-6,50],[1,51],[-2,58],[-6,57]]
-  ];
-  // A typical inhabited latitude for a longitude, so the bubble sits on land.
-  function landLat(lon) {
-    if (lon < -30) return lon < -100 ? 40 : (lon < -65 ? 35 : -15);
-    if (lon < 40) return lon < 20 ? 48 : 20;
-    if (lon < 90) return 30;
-    if (lon < 135) return 30;
-    if (lon < 160) return -28;
-    return -38;
+  // ---- time zone cards -------------------------------------------------------
+  // One card per UTC offset, west to east. Torn time (UTC+0) is always shown and highlighted.
+  function offText(off) {
+    const sign = off < 0 ? '−' : '+', a = Math.abs(off), h = Math.floor(a / 60), mm = a % 60;
+    return 'UTC' + (off === 0 ? '±0' : sign + h + (mm ? ':' + String(mm).padStart(2, '0') : ''));
   }
-  function worldMap(known) {
-    const NS = 'http://www.w3.org/2000/svg';
-    const mk = (t, a) => { const n = document.createElementNS(NS, t); Object.keys(a || {}).forEach((k) => n.setAttribute(k, a[k])); return n; };
-    const groups = {};
+  function localAtMidnight(off) {   // local clock time when it is 00:00 in Torn
+    const t = ((off % 1440) + 1440) % 1440, h = Math.floor(t / 60), mm = t % 60;
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return h12 + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? 'am' : 'pm');
+  }
+  function zoneCards(known) {
+    const groups = { 0: [] };
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
     const offs = Object.keys(groups).map(Number).sort((x, y) => x - y);
-    const n = Math.max(1, offs.length);
-    // Only the part of the world that has members is shown: crop sideways to the occupied zones and up/down to where the dots sit.
-    const pos = offs.map((off) => { const lon = Math.max(-180, Math.min(180, off / 60 * 15)); return { off: off, x: lon + 180, y: 90 - landLat(lon) }; });
-    let x0 = Math.min.apply(null, pos.map((q) => q.x)) - 22, x1 = Math.max.apply(null, pos.map((q) => q.x)) + 22;
-    if (x1 - x0 < 150) { const c = (x0 + x1) / 2; x0 = c - 75; x1 = c + 75; }
-    x0 = Math.max(0, x0); x1 = Math.min(360, x1);
-    const W = x1 - x0;
-    const y0 = Math.max(0, Math.min.apply(null, pos.map((q) => q.y)) - 30);
-    const y1 = Math.min(180, Math.max.apply(null, pos.map((q) => q.y)) + 28);
-    const colW = W / n;
-    const fs = Math.max(3.6, Math.min(8, colW / 6.4, 6.6 * W / 360 * 1.3));
-    const maxChars = Math.max(4, Math.floor(colW / (fs * 0.62)));
-    const rowH = fs + 2.6;
-    let most = 1; offs.forEach((o) => { most = Math.max(most, groups[o].length); });
-    const labTop = y1 + 12;
-    const H = labTop + 12 + most * rowH + 2;
-    const svg = mk('svg', { viewBox: x0 + ' ' + y0 + ' ' + W + ' ' + (H - y0), width: '100%' });
-    svg.style.cssText = 'display:block;width:100%;height:auto;background:#10202e;border-radius:6px;margin:6px 0;';
-    svg.appendChild(mk('rect', { x: x0, y: y0, width: W, height: H - y0, fill: '#10202e' }));
-    for (let o = -12; o <= 14; o++) svg.appendChild(mk('line', { x1: o * 15 + 180, y1: y0, x2: o * 15 + 180, y2: y1, stroke: '#2a3f52', 'stroke-width': 0.4 }));
-    LAND.forEach((poly) => svg.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + (90 - q[1])).join(' '), fill: '#2e4a3a', stroke: '#4a6b57', 'stroke-width': 0.5 })));
-    svg.appendChild(mk('rect', { x: x0, y: y1, width: W, height: H - y1, fill: '#10202e' }));
-    pos.forEach((q, i) => {
-      const off = q.off, cx = x0 + colW * i + colW / 2;
-      svg.appendChild(mk('line', { x1: q.x, y1: q.y, x2: cx, y2: labTop - 1, stroke: '#f5b942', 'stroke-width': 0.5, 'stroke-opacity': 0.7 }));
-      svg.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 2.6, fill: '#f5b942', stroke: '#fff', 'stroke-width': 0.6 }));
-      const t0 = mk('text', { x: cx, y: labTop + 6, 'text-anchor': 'middle', 'font-size': Math.min(6.4, fs), fill: '#7a9bb5' });
-      t0.textContent = 'UTC' + (off > 0 ? '+' : off < 0 ? '−' : '') + (Math.abs(off) % 60 ? (Math.abs(off) / 60).toFixed(1) : Math.abs(off) / 60);
-      svg.appendChild(t0);
-      groups[off].slice().sort((p, r) => (p.name.toLowerCase() < r.name.toLowerCase() ? -1 : 1)).forEach((m, j) => {
-        const t = mk('text', { x: cx, y: labTop + 6 + rowH * (j + 1), 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 'bold', fill: '#ffe9b0' });
-        t.textContent = m.name.length > maxChars ? m.name.slice(0, maxChars - 1) + '…' : m.name;
-        svg.appendChild(t);
-      });
+    const wrap = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:6px;margin:8px 0;');
+    offs.forEach((off) => {
+      const torn = off === 0;
+      const g = groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1));
+      const card = el('div', 'box-sizing:border-box;border-radius:8px;padding:6px 8px;' + (torn ? 'background:#3a2e10;border:2px solid #f5b942;' : 'background:#1c2733;border:1px solid #3a4a5a;'));
+      const head = el('div', 'display:flex;align-items:baseline;justify-content:space-between;gap:6px;');
+      head.appendChild(el('span', 'font-size:15px;font-weight:bold;color:' + (torn ? '#f5b942' : '#fff') + ';', offText(off)));
+      head.appendChild(el('span', 'font-size:11px;color:#9ab;', g.length ? String(g.length) : ''));
+      card.appendChild(head);
+      if (torn) card.appendChild(el('div', 'font-size:10px;font-weight:bold;letter-spacing:.5px;color:#f5b942;', 'TORN TIME (TCT)'));
+      card.appendChild(el('div', 'font-size:10px;color:#8aa;margin-bottom:3px;', 'Torn 00:00 = ' + localAtMidnight(off)));
+      if (!g.length) card.appendChild(el('div', 'font-size:11px;color:#778;', 'nobody'));
+      g.forEach((m) => card.appendChild(el('div', 'font-size:12px;color:#ffe9b0;word-break:break-word;', m.name)));
+      wrap.appendChild(card);
     });
-    return svg;
+    return wrap;
   }
 
   function render() {
@@ -612,8 +581,8 @@
     panel.appendChild(sum);
 
     if (known.length) {
-      sheet.appendChild(el('div', 'color:#fff;', known.length + ' members placed on the map'));
-      sheet.appendChild(worldMap(known));
+      sheet.appendChild(el('div', 'color:#fff;', known.length + ' members in ' + (new Set(known.map((m) => m.off))).size + ' time zones'));
+      sheet.appendChild(zoneCards(known));
 
       // grouped list, west to east
       const groups = {};
