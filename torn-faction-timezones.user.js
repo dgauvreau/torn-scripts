@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.3
+// @version      3.4
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -541,7 +541,7 @@
     const offs = Object.keys(groups).map(Number);
     const bandOf = (off) => Math.round(off / 60);                     // whole-hour band, half-hour zones sit on the nearest one
     const bands = offs.map(bandOf);
-    const lo = Math.max(-12, Math.min.apply(null, bands) - 1), hi = Math.min(14, Math.max.apply(null, bands) + 1);
+    const lo = Math.max(-12, Math.min(-8, Math.min.apply(null, bands) - 1)), hi = Math.min(14, Math.max(14, Math.max.apply(null, bands) + 1));   // always at least -8 to +14, so the map keeps the same wide look
     const x0 = lo * 15 + 180 - 7.5, x1 = hi * 15 + 180 + 7.5, W = x1 - x0;
     const px = 380 / W;                                                // screen pixels per drawing unit
     const fs = Math.max(4.5, Math.min(9, 10.5 / px));
