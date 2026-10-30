@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.56
+// @version      6.57
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -24,7 +24,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.56';
+  const VERSION = '6.57';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -441,6 +441,18 @@
     if (box.lifeEl) {
       box.lifeEl.textContent = ok && p.life && p.life.current != null ? Number(p.life.current).toLocaleString() : (p === 'error' || ok ? '?' : '…');
     }
+    if (box.timeEl) {
+      const left = ok ? apiLeft(p) : null;
+      box.timeEl.textContent = 'out in ' + fmtLeft(left !== null ? Math.max(0, left) : t.secs);
+    }
+    if (box.seenEl) {
+      const la = ok && p.last_action;
+      if (la && la.relative) {
+        box.seenEl.textContent = 'seen ' + la.relative.replace(/\s*seconds?/i, 's').replace(/\s*minutes?/i, 'm').replace(/\s*hours?/i, 'h').replace(/\s*days?/i, 'd');
+        // someone who is online right now is the one most likely to react
+        box.seenEl.style.color = la.status === 'Online' ? '#fc6' : '';
+      } else { box.seenEl.textContent = p === 'error' || ok ? 'seen ?' : ''; }
+    }
     if (box.facEl) {
       if (ok && p.faction && +p.faction.faction_id === 0) { box.facEl.textContent = '✓ None'; box.facEl.style.color = '#7c7'; }
       else if (p === 'error' || (ok && !p.faction)) { box.facEl.textContent = '?'; box.facEl.style.color = '#fc6'; }
@@ -546,7 +558,7 @@
       nm.textContent = t.name;
       nm.style.cssText = 'font-size:17px;font-weight:bold;text-decoration:underline;word-break:break-word;';
       const info = document.createElement('div');
-      info.style.cssText = 'margin-top:3px;opacity:.85;font-size:13px;';
+      info.style.cssText = 'margin-top:3px;opacity:.85;font-size:13px;line-height:1.5;';
       const lvlEl = document.createElement('span');
       lvlEl.textContent = t.lvl !== null ? t.lvl : '?';
       const lifeEl = document.createElement('span');
@@ -560,6 +572,11 @@
       info.appendChild(txt('Health ')); info.appendChild(lifeEl);
       info.appendChild(dot());
       info.appendChild(facEl);
+      const timeEl = document.createElement('span');
+      timeEl.textContent = 'out in ' + fmtLeft(t.secs);
+      const seenEl = document.createElement('span');
+      info.appendChild(dot()); info.appendChild(timeEl);
+      info.appendChild(dot()); info.appendChild(seenEl);
       prof.appendChild(nm); prof.appendChild(info);
 
       const atk = document.createElement('a');
@@ -575,6 +592,8 @@
       row.lvlEl = lvlEl;
       row.lifeEl = lifeEl;
       row.facEl = facEl;
+      row.timeEl = timeEl;
+      row.seenEl = seenEl;
       boxes[t.id] = row;
       list.appendChild(row);
     });
