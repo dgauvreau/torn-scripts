@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.2
+// @version      3.3
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -521,6 +521,90 @@
     const h12 = h % 12 === 0 ? 12 : h % 12;
     return h12 + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? 'am' : 'pm');
   }
+  const LAND = [
+    [[-168,66],[-140,70],[-95,72],[-80,63],[-62,58],[-55,50],[-67,44],[-76,35],[-81,25],[-97,26],[-105,20],[-95,16],[-83,9],[-80,8],[-87,14],[-105,22],[-115,30],[-124,40],[-125,49],[-135,58],[-150,60],[-165,60]],
+    [[-55,60],[-45,60],[-20,70],[-20,82],[-60,82],[-72,76]],
+    [[-80,8],[-60,10],[-50,0],[-35,-5],[-40,-22],[-58,-38],[-68,-55],[-74,-50],[-72,-30],[-80,-5]],
+    [[-10,36],[-9,43],[0,50],[5,58],[10,64],[25,71],[40,68],[40,45],[28,41],[20,38],[12,38],[3,43]],
+    [[-17,21],[-10,35],[10,37],[32,31],[43,12],[51,11],[40,-15],[33,-27],[20,-35],[12,-17],[9,4],[-8,4],[-17,14]],
+    [[28,41],[40,45],[40,68],[70,73],[110,77],[170,70],[180,65],[160,55],[140,45],[130,35],[122,30],[120,22],[108,10],[100,3],[98,15],[90,22],[80,8],[72,20],[58,24],[50,28],[44,12],[35,30],[28,36]],
+    [[114,-22],[130,-12],[142,-11],[153,-27],[146,-39],[135,-35],[115,-34]],
+    [[-6,50],[1,51],[-2,58],[-6,57]]
+  ];
+  // World backdrop with the time zones as vertical bands. Nothing is placed by location: a name sits in the band
+  // of its UTC offset only, and the map behind is just for orientation. Torn time (UTC+0) is the gold band.
+  function bandMap(known) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const mk = (t, a) => { const n = document.createElementNS(NS, t); Object.keys(a || {}).forEach((k) => n.setAttribute(k, a[k])); return n; };
+    const groups = { 0: [] };
+    known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
+    const offs = Object.keys(groups).map(Number);
+    const bandOf = (off) => Math.round(off / 60);                     // whole-hour band, half-hour zones sit on the nearest one
+    const bands = offs.map(bandOf);
+    const lo = Math.max(-12, Math.min.apply(null, bands) - 1), hi = Math.min(14, Math.max.apply(null, bands) + 1);
+    const x0 = lo * 15 + 180 - 7.5, x1 = hi * 15 + 180 + 7.5, W = x1 - x0;
+    const px = 380 / W;                                                // screen pixels per drawing unit
+    const fs = Math.max(4.5, Math.min(9, 10.5 / px));
+    const rowH = fs + 3.2;
+    // label boxes, placed top-down in the first row where they do not touch another
+    const labels = [];
+    Object.keys(groups).map(Number).forEach((off) => {
+      groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1)).forEach((m) => {
+        const w = m.name.length * fs * 0.6 + 4;
+        const bx = bandOf(off) * 15 + 180;
+        const cx = Math.max(x0 + w / 2 + 1, Math.min(x1 - w / 2 - 1, bx));
+        labels.push({ name: m.name, off: off, bx: bx, cx: cx, w: w, row: 0 });
+      });
+    });
+    labels.sort((p, q) => p.bx - q.bx);
+    const rows = [];                                                   // rows[r] = list of [left, right]
+    labels.forEach((L) => {
+      let r = 0;
+      for (;; r++) {
+        rows[r] = rows[r] || [];
+        if (!rows[r].some((b) => L.cx - L.w / 2 < b[1] && L.cx + L.w / 2 > b[0])) break;
+      }
+      rows[r].push([L.cx - L.w / 2, L.cx + L.w / 2]);
+      L.row = r;
+    });
+    const top = 12, axisY = top + Math.max(rows.length, 3) * rowH + 6, H = axisY + 30;
+    const svg = mk('svg', { viewBox: x0 + ' 0 ' + W + ' ' + H, width: '100%' });
+    svg.style.cssText = 'display:block;width:100%;height:auto;background:#10202e;border-radius:6px;margin:6px 0;';
+    svg.appendChild(mk('rect', { x: x0, y: 0, width: W, height: H, fill: '#10202e' }));
+    // faint world map stretched over the bands
+    const sy = (axisY - 4) / 180;
+    LAND.forEach((poly) => svg.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + ((90 - q[1]) * sy + 2)).join(' '), fill: '#2e4a3a', 'fill-opacity': 0.45, stroke: '#4a6b57', 'stroke-opacity': 0.5, 'stroke-width': 0.4 })));
+    for (let b = lo; b <= hi; b++) {
+      const x = b * 15 + 180 - 7.5;
+      const torn = b === 0;
+      svg.appendChild(mk('rect', { x: x, y: 0, width: 15, height: axisY + 30, fill: torn ? '#f5b942' : (b % 2 ? '#ffffff' : '#000000'), 'fill-opacity': torn ? 0.2 : 0.05 }));
+      svg.appendChild(mk('line', { x1: x, y1: 0, x2: x, y2: axisY, stroke: torn ? '#f5b942' : '#2a3f52', 'stroke-width': 0.4 }));
+      const t = mk('text', { x: b * 15 + 180, y: axisY + 11, 'text-anchor': 'middle', 'font-size': Math.min(8, fs + 1), 'font-weight': 'bold', fill: torn ? '#f5b942' : '#cfe3f5' });
+      t.textContent = b === 0 ? '±0' : (b < 0 ? '−' : '+') + Math.abs(b);
+      svg.appendChild(t);
+    }
+    const tt = mk('text', { x: 0 * 15 + 180, y: axisY + 21, 'text-anchor': 'middle', 'font-size': Math.max(3.6, fs - 1.6), 'font-weight': 'bold', fill: '#f5b942' });
+    tt.textContent = 'TORN';
+    svg.appendChild(tt);
+    const lt = mk('text', { x: x0 + 2, y: axisY + 27, 'font-size': Math.max(3.4, fs - 2), fill: '#7a9bb5' });
+    lt.textContent = '← behind Torn time';
+    svg.appendChild(lt);
+    const rt = mk('text', { x: x1 - 2, y: axisY + 27, 'text-anchor': 'end', 'font-size': Math.max(3.4, fs - 2), fill: '#7a9bb5' });
+    rt.textContent = 'ahead of Torn time →';
+    svg.appendChild(rt);
+    labels.forEach((L) => {
+      const y = top + L.row * rowH;
+      const tornL = L.off === 0;
+      svg.appendChild(mk('line', { x1: L.bx, y1: y + 2, x2: L.bx, y2: axisY, stroke: tornL ? '#f5b942' : '#f5b942', 'stroke-width': 0.35, 'stroke-opacity': 0.55 }));
+      svg.appendChild(mk('circle', { cx: L.bx, cy: axisY, r: 1.4, fill: '#f5b942' }));
+      svg.appendChild(mk('rect', { x: L.cx - L.w / 2, y: y - fs + 1, width: L.w, height: fs + 2, rx: 2, fill: '#10202e', 'fill-opacity': 0.85, stroke: tornL ? '#f5b942' : '#4a6b84', 'stroke-width': 0.4 }));
+      const t = mk('text', { x: L.cx, y: y + 0.6, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 'bold', fill: tornL ? '#ffd27a' : '#ffe9b0' });
+      t.textContent = L.name;
+      svg.appendChild(t);
+    });
+    return svg;
+  }
+
   function behind(off) {
     if (off === 0) return 'Torn time';
     const a = Math.abs(off), h = Math.floor(a / 60), mm = a % 60;
@@ -610,7 +694,7 @@
 
     if (known.length) {
       sheet.appendChild(el('div', 'color:#fff;', known.length + ' members in ' + (new Set(known.map((m) => m.off))).size + ' time zones'));
-      sheet.appendChild(zoneCards(known));
+      sheet.appendChild(bandMap(known));
       const shareRow = el('div', 'margin:0 0 6px;');
       const shareBtn = btn('\ud83d\udccb Copy as text to share', () => { shareOpen = !shareOpen; render(); }, 'Copy as text');
       shareBtn.style.marginLeft = '0';
