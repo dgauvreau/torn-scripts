@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.5
+// @version      3.6
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -539,19 +539,31 @@
     const groups = { 0: [] };
     known.forEach((m) => { (groups[m.off] = groups[m.off] || []).push(m); });
     const bandOf = (off) => Math.round(off / 60);                     // whole-hour band, half-hour zones sit on the nearest one
-    // Only bands that have members (plus Torn time) are drawn, in order; the empty ones are clipped out.
-    const shown = [];
-    Object.keys(groups).map(Number).forEach((off) => { const bnd = bandOf(off); if (shown.indexOf(bnd) < 0) shown.push(bnd); });
-    shown.sort((p, q) => p - q);
-    const slot = {}; shown.forEach((bnd, i) => { slot[bnd] = i; });
-    const BW = Math.max(15, 105 / shown.length), W = shown.length * BW, px = 380 / W;                // screen pixels per drawing unit
+    // Every zone from the first occupied one to the last is drawn, except that a stretch of more than 4 empty zones in a row is folded into one narrow break.
+    const occ = {};
+    Object.keys(groups).map(Number).forEach((off) => { occ[bandOf(off)] = true; });
+    const occBands = Object.keys(occ).map(Number).sort((p, q) => p - q);
+    const slots = [];
+    for (let bnd = occBands[0]; bnd <= occBands[occBands.length - 1];) {
+      if (occ[bnd]) { slots.push({ bnd: bnd, gap: 0 }); bnd++; continue; }
+      let n = 0; while (!occ[bnd + n]) n++;
+      if (n > 4) { slots.push({ bnd: bnd, gap: n }); bnd += n; }
+      else { for (let k = 0; k < n; k++) slots.push({ bnd: bnd + k, gap: 0 }); bnd += n; }
+    }
+    const baseW = slots.reduce((t, sl) => t + (sl.gap ? 9 : 15), 0);
+    const f = Math.max(1, 105 / baseW);
+    let acc = 0;
+    slots.forEach((sl) => { sl.w = (sl.gap ? 9 : 15) * f; sl.x = acc; acc += sl.w; });
+    const W = acc, px = 380 / W;                                       // screen pixels per drawing unit
+    const slotOf = {}; slots.forEach((sl) => { if (!sl.gap) slotOf[sl.bnd] = sl; });
     const fs = Math.max(4.2, Math.min(9, 10.5 / px));
     const rowH = fs + 3.2;
     const labels = [];
     Object.keys(groups).map(Number).forEach((off) => {
       groups[off].slice().sort((p, q) => (p.name.toLowerCase() < q.name.toLowerCase() ? -1 : 1)).forEach((m) => {
         const w = m.name.length * fs * 0.6 + 4;
-        const bx = slot[bandOf(off)] * BW + BW / 2;
+        const sl = slotOf[bandOf(off)];
+        const bx = sl.x + sl.w / 2;
         const cx = Math.max(w / 2 + 1, Math.min(W - w / 2 - 1, bx));
         labels.push({ name: m.name, off: off, bx: bx, cx: cx, w: w, row: 0 });
       });
@@ -573,24 +585,36 @@
     svg.appendChild(mk('rect', { x: 0, y: 0, width: W, height: H, fill: '#10202e' }));
     const defs = mk('defs'); svg.appendChild(defs);
     const sy = (axisY - 4) / 180;
-    shown.forEach((bnd, i) => {
-      const torn = bnd === 0, x = i * BW;
+    slots.forEach((sl, i) => {
+      const x = sl.x, w = sl.w;
+      if (sl.gap) {
+        svg.appendChild(mk('rect', { x: x, y: 0, width: w, height: H, fill: '#000', 'fill-opacity': 0.25 }));
+        svg.appendChild(mk('line', { x1: x, y1: 0, x2: x, y2: axisY, stroke: '#7a9bb5', 'stroke-width': 0.8, 'stroke-dasharray': '2 2' }));
+        svg.appendChild(mk('line', { x1: x + w, y1: 0, x2: x + w, y2: axisY, stroke: '#7a9bb5', 'stroke-width': 0.8, 'stroke-dasharray': '2 2' }));
+        const gt = mk('text', { x: x + w / 2, y: axisY + 11, 'text-anchor': 'middle', 'font-size': Math.min(7, fs), fill: '#7a9bb5' });
+        gt.textContent = '⋯';
+        svg.appendChild(gt);
+        const gl = mk('text', { x: 0, y: 0, 'text-anchor': 'start', 'font-size': Math.min(6, fs - 0.5), fill: '#9ab', transform: 'translate(' + (x + w / 2 + 2) + ',' + (axisY - 4) + ') rotate(-90)' });
+        gl.textContent = sl.gap + ' empty';
+        svg.appendChild(gl);
+        return;
+      }
+      const bnd = sl.bnd, torn = bnd === 0;
       const cp = mk('clipPath', { id: 'tzc' + i });
-      cp.appendChild(mk('rect', { x: x, y: 0, width: BW, height: axisY }));
+      cp.appendChild(mk('rect', { x: x, y: 0, width: w, height: axisY }));
       defs.appendChild(cp);
       const outer = mk('g', { 'clip-path': 'url(#tzc' + i + ')' });
-      const g = mk('g', { transform: 'translate(' + x + ',0) scale(' + (BW / 15) + ',1) translate(' + (-(bnd * 15 + 180 - 7.5)) + ',0)' });   // slide this band's slice of the world into its slot
+      const g = mk('g', { transform: 'translate(' + x + ',0) scale(' + (w / 15) + ',1) translate(' + (-(bnd * 15 + 180 - 7.5)) + ',0)' });
       outer.appendChild(g);
       LAND.forEach((poly) => g.appendChild(mk('polygon', { points: poly.map((q) => (q[0] + 180) + ',' + ((90 - q[1]) * sy + 2)).join(' '), fill: '#2e4a3a', 'fill-opacity': 0.5, stroke: '#4a6b57', 'stroke-opacity': 0.5, 'stroke-width': 0.4 })));
-      svg.appendChild(mk('rect', { x: x, y: 0, width: BW, height: H, fill: torn ? '#f5b942' : (i % 2 ? '#ffffff' : '#000000'), 'fill-opacity': torn ? 0.2 : 0.05 }));
+      svg.appendChild(mk('rect', { x: x, y: 0, width: w, height: H, fill: torn ? '#f5b942' : (i % 2 ? '#ffffff' : '#000000'), 'fill-opacity': torn ? 0.2 : 0.05 }));
       svg.appendChild(outer);
-      const gap = i > 0 && bnd - shown[i - 1] > 1;
-      svg.appendChild(mk('line', { x1: x, y1: 0, x2: x, y2: axisY, stroke: gap ? '#7a9bb5' : (torn ? '#f5b942' : '#2a3f52'), 'stroke-width': gap ? 1 : 0.4, 'stroke-dasharray': gap ? '2 2' : '' }));
-      const t = mk('text', { x: x + BW / 2, y: axisY + 11, 'text-anchor': 'middle', 'font-size': Math.min(8, fs + 1), 'font-weight': 'bold', fill: torn ? '#f5b942' : '#cfe3f5' });
+      svg.appendChild(mk('line', { x1: x, y1: 0, x2: x, y2: axisY, stroke: torn ? '#f5b942' : '#2a3f52', 'stroke-width': 0.4 }));
+      const t = mk('text', { x: x + w / 2, y: axisY + 11, 'text-anchor': 'middle', 'font-size': Math.min(8, fs + 1), 'font-weight': 'bold', fill: torn ? '#f5b942' : '#cfe3f5' });
       t.textContent = bnd === 0 ? '±0' : (bnd < 0 ? '−' : '+') + Math.abs(bnd);
       svg.appendChild(t);
       if (torn) {
-        const tt = mk('text', { x: x + BW / 2, y: axisY + 21, 'text-anchor': 'middle', 'font-size': Math.max(3.4, fs - 1.6), 'font-weight': 'bold', fill: '#f5b942' });
+        const tt = mk('text', { x: x + w / 2, y: axisY + 21, 'text-anchor': 'middle', 'font-size': Math.max(3.4, fs - 1.6), 'font-weight': 'bold', fill: '#f5b942' });
         tt.textContent = 'TORN';
         svg.appendChild(tt);
       }
