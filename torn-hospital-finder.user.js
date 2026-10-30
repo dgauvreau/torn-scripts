@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.58
+// @version      6.59
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,7 +22,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.58"
+const VERSION="6.59"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -245,8 +245,7 @@ updateCount()
 return}const ok=p&&typeof p==="object"
 if(box.lvlEl&&t.lvl===null&&ok&&typeof p.level==="number"){box.lvlEl.textContent=p.level
 box.lvlNum=p.level}if(ok&&p.last_action&&typeof p.last_action.timestamp==="number")box.lastTs=p.last_action.timestamp
-if(box.lifeEl){box.lifeEl.textContent=ok&&p.life&&p.life.current!=null?Number(p.life.current).toLocaleString():p==="error"||ok?"?":"\u2026"}if(box.timeEl){const left=ok?apiLeft(p):null
-box.timeEl.textContent="out in "+fmtLeft(left!==null?Math.max(0,left):t.secs)}if(box.seenEl){const la=ok&&p.last_action
+if(box.lifeEl){box.lifeEl.textContent=ok&&p.life&&p.life.current!=null?Number(p.life.current).toLocaleString():p==="error"||ok?"?":"\u2026"}if(box.seenEl){const la=ok&&p.last_action
 if(la&&la.relative){box.seenEl.textContent="seen "+la.relative.replace(/\s*seconds?/i,"s").replace(/\s*minutes?/i,"m").replace(/\s*hours?/i,"h").replace(/\s*days?/i,"d")
 box.seenEl.style.color=la.status==="Online"?"#fc6":""}else{box.seenEl.textContent=p==="error"||ok?"seen ?":""}}reorderBoxes()
 if(box.facEl){if(ok&&p.faction&&+p.faction.faction_id===0){box.facEl.textContent="\u2713 None"
@@ -356,11 +355,7 @@ info.appendChild(txt("Health "))
 info.appendChild(lifeEl)
 info.appendChild(dot())
 info.appendChild(facEl)
-const timeEl=document.createElement("span")
-timeEl.textContent="out in "+fmtLeft(t.secs)
 const seenEl=document.createElement("span")
-info.appendChild(dot())
-info.appendChild(timeEl)
 info.appendChild(dot())
 info.appendChild(seenEl)
 prof.appendChild(nm)
@@ -376,7 +371,6 @@ row.lvlEl=lvlEl
 row.lvlNum=t.lvl
 row.lifeEl=lifeEl
 row.facEl=facEl
-row.timeEl=timeEl
 row.seenEl=seenEl
 boxes[t.id]=row
 list.appendChild(row)})
