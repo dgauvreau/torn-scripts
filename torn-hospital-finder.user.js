@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.59
+// @version      6.60
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -13,8 +13,9 @@ const LEVEL_BUFFER=0
 const LEVEL_RANGE_PCT=.1
 const USE_LEVEL_LIMIT=true
 const USE_FACTION_FILTER=true
-const MAX_SECONDS=600
-const MAX_LOOKUPS=10
+let MAX_SECONDS=600
+try{const mm=parseInt(localStorage.getItem("ht_max_minutes"),10)
+if(mm>=1&&mm<=120)MAX_SECONDS=mm*60}catch(e){}const MAX_LOOKUPS=10
 const MIN_RESULTS=10
 const MAX_JUMPS=8
 const MIN_INACTIVE_DAYS=7
@@ -22,7 +23,7 @@ const FLAG="ht_find_target"
 const WALK_KEY="ht_walk"
 const HOSPITAL_URL="https://www.torn.com/hospitalview.php"
 const onHospital=location.pathname.includes("hospitalview.php")
-const VERSION="6.59"
+const VERSION="6.60"
 const badge=document.createElement("div")
 badge.setAttribute("data-find-target-badge","1")
 badge.style.cssText="display:none;box-sizing:border-box;width:100%;margin:6px 0;padding:8px;background:#3a1f1f;color:#f99;"+"border:1px solid #a44;border-radius:5px;font:12px sans-serif;cursor:pointer;"
@@ -209,6 +210,7 @@ location.href=HOSPITAL_URL+"?rescan="+Date.now()}const boxes={}
 let countEl=null
 let statusEl=null
 let listEl=null
+let timeTimer=null
 function reorderBoxes(){if(!listEl)return
 const rows=[...listEl.children]
 const lv=r=>typeof r.lvlNum==="number"?r.lvlNum:-1
@@ -222,7 +224,27 @@ if(walk&&walk.moving)return true
 if(pg.cur!==null&&pg.max!==null&&pg.cur<pg.max&&!(walk&&walk.reachedLast))return true
 if(shortestOnPage===null)return Date.now()-liveStart<15e3
 if(shortestOnPage>MAX_SECONDS)return!(walk&&walk.reachedLast&&walk.stable>=2)
-return false}let dots=0
+return false}function makeStepper(name,onStep){const g=document.createElement("div")
+g.style.cssText="display:flex;align-items:center;gap:6px;"
+const nm=document.createElement("span")
+nm.textContent=name
+nm.style.cssText="opacity:.8;"
+const val=document.createElement("b")
+val.style.cssText="min-width:2.2em;text-align:center;font-size:16px;"
+const mkb=(txt,d)=>{const b=document.createElement("button")
+b.type="button"
+b.textContent=txt
+b.style.cssText="width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;"+"border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;"
+b.addEventListener("click",safe(e=>{e.preventDefault()
+e.stopPropagation()
+onStep(d)}))
+return b}
+g.appendChild(nm)
+g.appendChild(mkb("\u2212",-1))
+g.appendChild(val)
+g.appendChild(mkb("+",1))
+g.val=val
+return g}let dots=0
 function statusText(){if(!walk)return""
 const pg=pageInfo()
 const pagesTxt=walk.back+1+(walk.back===0?" page":" pages")+" searched"
@@ -276,31 +298,12 @@ const commit=()=>{clearTimeout(commitTimer)
 commitTimer=setTimeout(()=>{try{localStorage.setItem("ht_min_level",curMin)
 localStorage.setItem("ht_max_level",curMax)}catch(e){}lastSig=null
 tick()},500)}
-const stepper=(name,get,set)=>{const g=document.createElement("div")
-g.style.cssText="display:flex;align-items:center;gap:6px;"
-const nm=document.createElement("span")
-nm.textContent=name
-nm.style.cssText="opacity:.8;"
-const val=document.createElement("b")
-val.style.cssText="min-width:2.2em;text-align:center;font-size:16px;"
-const mkb=(txt,d)=>{const b=document.createElement("button")
-b.type="button"
-b.textContent=txt
-b.style.cssText="width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;"+"border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;"
-b.addEventListener("click",safe(e=>{e.preventDefault()
-e.stopPropagation()
-set(get()+d)
+const gMin=makeStepper("From",d=>{curMin=Math.max(lo,Math.min(curMin+d,curMax))
 refresh()
-commit()}))
-return b}
-g.appendChild(nm)
-g.appendChild(mkb("\u2212",-1))
-g.appendChild(val)
-g.appendChild(mkb("+",1))
-g.val=val
-return g}
-const gMin=stepper("From",()=>curMin,v=>{curMin=Math.max(lo,Math.min(v,curMax))})
-const gMax=stepper("To",()=>curMax,v=>{curMax=Math.min(hi,Math.max(v,curMin))})
+commit()})
+const gMax=makeStepper("To",d=>{curMax=Math.min(hi,Math.max(curMax+d,curMin))
+refresh()
+commit()})
 const refresh=()=>{gMin.val.textContent=curMin
 gMax.val.textContent=curMax}
 refresh()
@@ -308,7 +311,23 @@ row.appendChild(gMin)
 row.appendChild(gMax)
 wrap.appendChild(lab)
 wrap.appendChild(row)
-panel.appendChild(wrap)}const dg=document.createElement("div")
+panel.appendChild(wrap)}{const TIMES=[1,2,3,5,10,15,20,30,45,60]
+let ti=0
+TIMES.forEach((m,i)=>{if(Math.abs(m*60-MAX_SECONDS)<Math.abs(TIMES[ti]*60-MAX_SECONDS))ti=i})
+const w2=document.createElement("div")
+w2.style.cssText="margin-top:12px;"
+const l2=document.createElement("div")
+l2.style.cssText="opacity:.8;margin-bottom:6px;"
+l2.textContent="Time left in hospital"
+const g2=makeStepper("At most",d=>{ti=Math.max(0,Math.min(TIMES.length-1,ti+d))
+g2.val.textContent=TIMES[ti]+" min"
+clearTimeout(timeTimer)
+timeTimer=setTimeout(()=>{try{localStorage.setItem("ht_max_minutes",String(TIMES[ti]))}catch(e){}rescan()},900)})
+g2.val.style.minWidth="4.5em"
+g2.val.textContent=TIMES[ti]+" min"
+w2.appendChild(l2)
+w2.appendChild(g2)
+panel.appendChild(w2)}const dg=document.createElement("div")
 dg.style.cssText="opacity:.6;margin-top:10px;font-size:12px;cursor:pointer;line-height:1.4;"
 dg.textContent=diagText()
 dg.addEventListener("click",e=>{e.stopPropagation()
@@ -360,13 +379,7 @@ info.appendChild(dot())
 info.appendChild(seenEl)
 prof.appendChild(nm)
 prof.appendChild(info)
-const atk=document.createElement("a")
-atk.href="https://www.torn.com/loader.php?sid=attack&user2ID="+t.id
-atk.target="_blank"
-atk.textContent="Attack"
-atk.style.cssText="flex:none;padding:6px 12px;color:inherit;border:1px solid rgba(128,128,128,.6);"+"border-radius:5px;font-size:12px;text-decoration:none;opacity:.85;"
 row.appendChild(prof)
-row.appendChild(atk)
 row.lvlEl=lvlEl
 row.lvlNum=t.lvl
 row.lifeEl=lifeEl

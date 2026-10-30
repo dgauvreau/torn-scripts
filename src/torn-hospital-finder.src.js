@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Find Target
 // @namespace    torn-hospital-targets
-// @version      6.59
+// @version      6.60
 // @description  A Find Targets button on the hospital page scans the end of the hospital list for people at or below your level with no faction and almost out of hospital, and shows profile details (via the official Torn API). If fewer than 10 people match, it keeps jumping back through earlier hospital pages, going further each time.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -15,7 +15,8 @@
   const LEVEL_RANGE_PCT = 0.10; // the slider goes this far above your own level (10%, at least 1 level)
   const USE_LEVEL_LIMIT = true;     // only people at or below your level (+ LEVEL_BUFFER)
   const USE_FACTION_FILTER = true;  // skip people in a faction
-  const MAX_SECONDS = 600;  // skip anyone with more than this left in hospital (checked on the page AND against the API)
+  let MAX_SECONDS = 600;    // skip anyone with more than this left in hospital (checked on the page AND against the API); adjustable in the panel
+  try { const mm = parseInt(localStorage.getItem('ht_max_minutes'), 10); if (mm >= 1 && mm <= 120) MAX_SECONDS = mm * 60; } catch (e) {}
   const MAX_LOOKUPS = 10;   // only look up details for this many of the most promising people
   const MIN_RESULTS = 10;   // if fewer people than this match on the last hospital page, step back through earlier pages
   const MAX_JUMPS = 8;      // ...but never open more than this many extra pages (each jump goes twice as far back as the last)
@@ -24,7 +25,7 @@
   const WALK_KEY = 'ht_walk'; // carries the search across a page reload when Torn reloads the page as we step back
   const HOSPITAL_URL = 'https://www.torn.com/hospitalview.php';
   const onHospital = location.pathname.includes('hospitalview.php');
-  const VERSION = '6.59';
+  const VERSION = '6.60';
 
   // ---- error notice -----------------------------------------------------------
   // Created first, before anything else can fail. It stays hidden unless the script breaks; then a red notice with
@@ -385,6 +386,7 @@
   let countEl = null;
   let statusEl = null;
   let listEl = null;
+  let timeTimer = null;
   // Highest level first; within a level, the one seen longest ago first (people with no last-seen info go last).
   function reorderBoxes() {
     if (!listEl) return;
@@ -411,6 +413,29 @@
     if (shortestOnPage === null) return Date.now() - liveStart < 15000;
     if (shortestOnPage > MAX_SECONDS) return !(walk && walk.reachedLast && walk.stable >= 2);
     return false;
+  }
+
+  // A label with a [-] value [+] pair; onStep(-1 or +1) is called on each tap. Taps instead of a slider, because a
+  // slider clashes with PDA's swipe-in drawer on the left edge of the screen.
+  function makeStepper(name, onStep) {
+    const g = document.createElement('div');
+    g.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const nm = document.createElement('span');
+    nm.textContent = name;
+    nm.style.cssText = 'opacity:.8;';
+    const val = document.createElement('b');
+    val.style.cssText = 'min-width:2.2em;text-align:center;font-size:16px;';
+    const mkb = (txt, d) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = txt;
+      b.style.cssText = 'width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;' +
+        'border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;';
+      b.addEventListener('click', safe((e) => { e.preventDefault(); e.stopPropagation(); onStep(d); }));
+      return b;
+    };
+    g.appendChild(nm); g.appendChild(mkb('\u2212', -1)); g.appendChild(val); g.appendChild(mkb('+', 1));
+    g.val = val;
+    return g;
   }
 
   // A plain-words progress line: what the scan is doing right now, or why it finished.
@@ -503,33 +528,38 @@
           lastSig = null; tick();
         }, 500);
       };
-      const stepper = (name, get, set) => {
-        const g = document.createElement('div');
-        g.style.cssText = 'display:flex;align-items:center;gap:6px;';
-        const nm = document.createElement('span');
-        nm.textContent = name;
-        nm.style.cssText = 'opacity:.8;';
-        const val = document.createElement('b');
-        val.style.cssText = 'min-width:2.2em;text-align:center;font-size:16px;';
-        const mkb = (txt, d) => {
-          const b = document.createElement('button');
-          b.type = 'button'; b.textContent = txt;
-          b.style.cssText = 'width:38px;height:34px;padding:0;background:rgba(128,128,128,.18);color:inherit;' +
-            'border:1px solid rgba(128,128,128,.5);border-radius:6px;font:inherit;font-size:18px;font-weight:bold;cursor:pointer;';
-          b.addEventListener('click', safe((e) => { e.preventDefault(); e.stopPropagation(); set(get() + d); refresh(); commit(); }));
-          return b;
-        };
-        g.appendChild(nm); g.appendChild(mkb('\u2212', -1)); g.appendChild(val); g.appendChild(mkb('+', 1));
-        g.val = val;
-        return g;
-      };
-      const gMin = stepper('From', () => curMin, (v) => { curMin = Math.max(lo, Math.min(v, curMax)); });
-      const gMax = stepper('To', () => curMax, (v) => { curMax = Math.min(hi, Math.max(v, curMin)); });
+      const gMin = makeStepper('From', (d) => { curMin = Math.max(lo, Math.min(curMin + d, curMax)); refresh(); commit(); });
+      const gMax = makeStepper('To', (d) => { curMax = Math.min(hi, Math.max(curMax + d, curMin)); refresh(); commit(); });
       const refresh = () => { gMin.val.textContent = curMin; gMax.val.textContent = curMax; };
       refresh();
       row.appendChild(gMin); row.appendChild(gMax);
       wrap.appendChild(lab); wrap.appendChild(row);
       panel.appendChild(wrap);
+    }
+
+    // How long people may still have left in hospital. Changing it saves the choice and starts a fresh scan.
+    {
+      const TIMES = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+      let ti = 0;
+      TIMES.forEach((m, i) => { if (Math.abs(m * 60 - MAX_SECONDS) < Math.abs(TIMES[ti] * 60 - MAX_SECONDS)) ti = i; });
+      const w2 = document.createElement('div');
+      w2.style.cssText = 'margin-top:12px;';
+      const l2 = document.createElement('div');
+      l2.style.cssText = 'opacity:.8;margin-bottom:6px;';
+      l2.textContent = 'Time left in hospital';
+      const g2 = makeStepper('At most', (d) => {
+        ti = Math.max(0, Math.min(TIMES.length - 1, ti + d));
+        g2.val.textContent = TIMES[ti] + ' min';
+        clearTimeout(timeTimer);
+        timeTimer = setTimeout(() => {
+          try { localStorage.setItem('ht_max_minutes', String(TIMES[ti])); } catch (e) {}
+          rescan();
+        }, 900);
+      });
+      g2.val.style.minWidth = '4.5em';
+      g2.val.textContent = TIMES[ti] + ' min';
+      w2.appendChild(l2); w2.appendChild(g2);
+      panel.appendChild(w2);
     }
 
     const dg = document.createElement('div');
@@ -551,7 +581,7 @@
     }
 
     // One card per target: the name (big, tap anywhere on the left to open the profile) with the details under
-    // it, and a small Attack button on the right.
+    // it.
     const list = document.createElement('div');
     listEl = list;
     list.style.cssText = 'margin-top:10px;';
@@ -585,16 +615,7 @@
       info.appendChild(dot()); info.appendChild(seenEl);
       prof.appendChild(nm); prof.appendChild(info);
 
-      const atk = document.createElement('a');
-      atk.href = 'https://www.torn.com/loader.php?sid=attack&user2ID=' + t.id;
-      atk.target = '_blank';
-      atk.textContent = 'Attack';
-      atk.style.cssText =
-        'flex:none;padding:6px 12px;color:inherit;border:1px solid rgba(128,128,128,.6);' +
-        'border-radius:5px;font-size:12px;text-decoration:none;opacity:.85;';
-
       row.appendChild(prof);
-      row.appendChild(atk);
       row.lvlEl = lvlEl;
       row.lvlNum = t.lvl;
       row.lifeEl = lifeEl;
