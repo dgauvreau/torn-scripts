@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Attackers
 // @namespace    torn-faction-attackers
-// @version      2.2
+// @version      3.0
 // @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. A By faction view groups attackers by their faction, and the strip names the faction behind most of the recent hits, so you can see at a glance whether the people hitting your mates are one faction. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -138,13 +138,17 @@
   const isWin = (r) => WIN_RE.test(r || '');
 
   function summarise(attacks) {
-    const byAtk = new Map(), byVic = new Map(), byFac = new Map(), recentFac = new Map();
+    const byAtk = new Map(), byVic = new Map(), byFac = new Map(), recentFac = new Map(), byCode = new Map();
     let hidden = 0, wins = 0, recent = 0;
     const recentAtk = new Set();
     const cutoff = nowSec() - RECENT_SEC;
     attacks.forEach((a) => {
       const who = a.attacker, vic = a.defender;
       const ts = +a.ended || +a.started || 0;
+      {
+        const fo = (who && who.faction) || a.attacker_faction || null;
+        if (a.code) byCode.set(String(a.code), { fid: fo && fo.id ? +fo.id : 0, faction: fo && fo.name ? fo.name : '', name: who && who.name ? who.name : '', hidden: !who || !who.id || !!a.is_stealthed });
+      }
       const win = isWin(a.result);
       if (win) wins++;
       if (ts >= cutoff) { recent++; if (who && who.id && !a.is_stealthed) recentAtk.add(who.id); }
@@ -181,7 +185,7 @@
     // Top faction among the recent hits; "No faction" never counts as a group.
     const topRecent = Array.from(recentFac.values()).filter((r) => r.id).sort((x, y) => (y.count - x.count) || (y.attackers.size - x.attackers.size))[0] || null;
     return {
-      factions: facs, topRecent,
+      factions: facs, topRecent, byCode,
       attackers: Array.from(byAtk.values()).sort(sortFn),
       victims: Array.from(byVic.values()).sort(sortFn),
       hidden, wins, recent, recentAtk: recentAtk.size, total: attacks.length, ts: nowSec(),
@@ -450,34 +454,53 @@
     let text = '', border = '#555', color = '#fff';
     if (needsKey()) {
       text = '🛡 Attackers: key needed (tap)'; color = '#fc6';
-    } else if (chain) {
-      const left = Math.max(0, Math.ceil((chain.deadline - Date.now()) / 1000));
-      text = '🛡 Chain ' + chain.current + (chain.max ? '/' + chain.max : '') + ' · ' + mmss(left);
-      if (left < 60) color = '#ff5b5b';
-      if (data) {
-        // The strip's own numbers always cover the last RECENT_SEC window, whatever the panel's window is.
-        text += ' · ' + (data.recent ? '⚠ ' + data.recent + ' hit' + (data.recent === 1 ? '' : 's') + ' on mates (' + Math.round(RECENT_SEC / 60) + 'm)' : 'no recent hits on mates');
+    } else if (problem && problem.code !== 5) {
+      text = '🛡 Attackers failed: ' + (problem.message || 'error') + (problem.code != null ? ' (' + problem.code + ')' : ''); color = '#f88'; border = '#f88';
+    } else if (chain && data) {
+      // Only attack info here; Torn already shows the chain count and timer.
+      if (data.recent) {
+        text = '🛡 ' + data.recent + ' hit' + (data.recent === 1 ? '' : 's') + ' on mates (' + Math.round(RECENT_SEC / 60) + 'm)';
         const tf = data.topRecent;
-        if (data.recent && tf && (tf.count >= 2 || tf.attackers.size >= 2)) text += ' · ' + tf.count + ' from ' + tf.name;
-        if (data.recent) border = '#f88';
-        else border = '#9d9';
+        if (tf && (tf.count >= 2 || tf.attackers.size >= 2)) text += ' · ' + tf.count + ' from ' + tf.name;
+        border = '#f88';
       }
-      if (!data && !problem && busyAtk) text += ' · loading attacks…';
-      if (problem && problem.code === 5) text += ' · rate limited';
-      else if (problem) { text += ' · attacks failed: ' + (problem.message || 'error') + (problem.code != null ? ' (' + problem.code + ')' : ''); border = '#f88'; }
-    } else if (chainLoaded) {
-      text = '🛡 Attackers · no live chain (tap)'; color = '#aaa';
     }
-    if (!text) { strip.style.display = 'none'; return; }
+    if (!text) { text = '🛡'; color = '#888'; }
     if (strip.textContent !== text) strip.textContent = text;
     strip.style.color = color;
     strip.style.borderColor = border;
     strip.style.display = 'block';
   }
 
+  // ---- annotate Torn's own "Recent attacks" rows -------------------------
+  // Each row has a View link to the attack log whose ID is the attack code, which is how a row is matched to the API data.
+  function annotateRows() {
+    if (!data || !data.byCode || !/\/factions\.php/i.test(location.pathname)) return;
+    const links = document.querySelectorAll('a[href*="attackLog"], a[href*="attacklog"]');
+    links.forEach((a) => {
+      const m = /[?&]ID=([^&#]+)/i.exec(a.getAttribute('href') || '');
+      if (!m) return;
+      const info = data.byCode.get(m[1]);
+      let tag = a.parentNode && a.parentNode.querySelector && a.parentNode.querySelector('[data-fa-tag]');
+      if (!info) { if (tag) tag.remove(); return; }
+      const fac = info.fid ? data.factions.find((f) => f.id === info.fid) : null;
+      const shared = !!(fac && fac.people >= 2);
+      const text = info.faction ? '\ud83d\udee1 ' + info.faction + (shared ? ' \u00d7' + fac.people : '') : (info.hidden ? '' : '\ud83d\udee1 no faction');
+      if (!text) { if (tag) tag.remove(); return; }
+      if (!tag) {
+        tag = el('span', '', '');
+        tag.setAttribute('data-fa-tag', '1');
+        a.parentNode.insertBefore(tag, a);
+      }
+      tag.style.cssText = 'margin-right:8px;font:bold 12px sans-serif;color:' + (shared ? '#fc6' : '#9cf') + ';';
+      if (tag.textContent !== text) tag.textContent = text;
+    });
+  }
+
   // ---- loop --------------------------------------------------------------
   function tick() {
     updateStrip();
+    annotateRows();
     if (isOpen() && chain) render(); // keep the panel's chain timer ticking
     if (document.visibilityState === 'hidden' || !onWatchedPage() || !getKey() || needsKey()) return;
     if (Date.now() - lastChain >= CHAIN_POLL_MS) fetchChain();
