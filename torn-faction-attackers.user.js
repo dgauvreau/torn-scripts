@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Attackers
 // @namespace    torn-faction-attackers
-// @version      3.0
+// @version      3.1
 // @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. A By faction view groups attackers by their faction, and the strip names the faction behind most of the recent hits, so you can see at a glance whether the people hitting your mates are one faction. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -77,7 +77,7 @@
   }
 
   // Incoming attacks on faction members since `from`, newest first, paging back with `to`.
-  const diag = { chain: '', atk: '', mode: '' };
+  const diag = { chain: '', atk: '', mode: '', log: '', logSummary: '' };
   const isKeyErr = (e) => e && (e.code === 2 || e.code === 5 || e.code === 16);
   let ownFactionId = 0;
   async function getOwnFactionId() {
@@ -434,7 +434,7 @@
   }
   function appendDiag() {
     const d = el('div', 'margin-top:6px;font-size:10px;color:#777;word-break:break-all;');
-    d.textContent = 'Debug \u00b7 chain: ' + (diag.chain || 'n/a') + ' \u00b7 attacks: ' + (diag.atk || 'n/a');
+    d.textContent = 'Debug \u00b7 chain: ' + (diag.chain || 'n/a') + ' \u00b7 attacks: ' + (diag.atk || 'n/a') + (diag.log ? ' \u00b7 log: ' + diag.log : '');
     sheet.appendChild(d);
   }
 
@@ -465,6 +465,7 @@
         border = '#f88';
       }
     }
+    if (diag.logSummary) text = (text || '🛡') + ' · ' + diag.logSummary;
     if (!text) { text = '🛡'; color = '#888'; }
     if (strip.textContent !== text) strip.textContent = text;
     strip.style.color = color;
@@ -497,10 +498,49 @@
     });
   }
 
+  // ---- attack-log test ---------------------------------------------------
+  // Looks up a few of the page's own attacks by their log code (torn/attacklog), which may work without faction API access,
+  // and reports what came back so we can tell whether it names the attacker's faction. Runs on the faction page only.
+  const logTested = new Set();
+  let logBusy = false;
+  const LOG_MAX = 3;
+  function pageAttackCodes() {
+    const anon = [], named = [];
+    document.querySelectorAll('a[href*="attackLog"], a[href*="attacklog"]').forEach((a) => {
+      const m = /[?&]ID=([^&#]+)/i.exec(a.getAttribute('href') || '');
+      if (!m || logTested.has(m[1]) || anon.includes(m[1]) || named.includes(m[1])) return;
+      const row = a.closest('li') || (a.parentElement && a.parentElement.parentElement && a.parentElement.parentElement.parentElement);
+      ((row && /Someone/.test(row.textContent || '')) ? anon : named).push(m[1]);
+    });
+    return anon.slice(0, 2).concat(named.slice(0, 1)).concat(anon.slice(2), named.slice(1));
+  }
+  async function testAttackLogs() {
+    if (logBusy || logTested.size >= LOG_MAX || !getKey() || !/\/factions\.php/i.test(location.pathname)) return;
+    const codes = pageAttackCodes();
+    if (!codes.length) return;
+    logBusy = true;
+    const code = codes[0];
+    logTested.add(code);
+    try {
+      const j = await api('torn/attacklog', { log: code, timestamp: nowSec() });
+      const raw = JSON.stringify(j);
+      const hasFaction = /faction/i.test(raw);
+      diag.log = (diag.log ? diag.log + ' || ' : '') + code.slice(0, 6) + ': ' + raw.slice(0, 450);
+      diag.logSummary = 'attack-log test: ' + (hasFaction ? 'faction info present' : 'no faction info');
+    } catch (e) {
+      diag.log = (diag.log ? diag.log + ' || ' : '') + code.slice(0, 6) + ': ERROR ' + e.message + (e.code != null ? ' (' + e.code + ')' : '');
+      diag.logSummary = 'attack-log test: error ' + e.message + (e.code != null ? ' (' + e.code + ')' : '');
+    }
+    logBusy = false;
+    updateStrip();
+    render();
+  }
+
   // ---- loop --------------------------------------------------------------
   function tick() {
     updateStrip();
     annotateRows();
+    testAttackLogs();
     if (isOpen() && chain) render(); // keep the panel's chain timer ticking
     if (document.visibilityState === 'hidden' || !onWatchedPage() || !getKey() || needsKey()) return;
     if (Date.now() - lastChain >= CHAIN_POLL_MS) fetchChain();
