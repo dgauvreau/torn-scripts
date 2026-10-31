@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Attackers
 // @namespace    torn-faction-attackers
-// @version      2.1
+// @version      2.2
 // @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. A By faction view groups attackers by their faction, and the strip names the faction behind most of the recent hits, so you can see at a glance whether the people hitting your mates are one faction. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -77,20 +77,57 @@
   }
 
   // Incoming attacks on faction members since `from`, newest first, paging back with `to`.
+  const diag = { chain: '', atk: '', mode: '' };
+  const isKeyErr = (e) => e && (e.code === 2 || e.code === 5 || e.code === 16);
+  let ownFactionId = 0;
+  async function getOwnFactionId() {
+    if (ownFactionId) return ownFactionId;
+    const j = await api('faction/basic', { timestamp: nowSec() });
+    const b = (j && (j.basic || j)) || {};
+    ownFactionId = +b.id || 0;
+    return ownFactionId;
+  }
+  // Page of attacks on our faction. First asks Torn for incoming-only; if Torn rejects that, reads all attacks and keeps the ones on our own members.
+  async function attackPage(from, to) {
+    const base = { limit: 100, sort: 'desc', from: from, to: to, timestamp: nowSec() };
+    if (diag.mode !== 'all') {
+      try {
+        const j = await api('faction/attacks', Object.assign({ filters: 'incoming' }, base));
+        diag.mode = 'incoming';
+        return Array.isArray(j.attacks) ? j.attacks : [];
+      } catch (e) {
+        if (isKeyErr(e)) throw e;
+        diag.mode = 'all';
+        diag.atk = 'incoming filter failed (' + e.message + '); reading all attacks';
+      }
+    }
+    const fid = await getOwnFactionId();
+    const j = await api('faction/attacks', base);
+    const rows = Array.isArray(j.attacks) ? j.attacks : [];
+    const kept = fid ? rows.filter((a) => a.defender && a.defender.faction && +a.defender.faction.id === fid) : rows;
+    kept._rawCount = rows.length;
+    kept._minTs = rows.reduce((m, a) => Math.min(m, +a.started || Infinity), Infinity);
+    return kept;
+  }
   async function loadAttacks(from) {
     const seen = new Map();
     let to = nowSec();
     for (let page = 0; page < MAX_PAGES; page++) {
-      const j = await api('faction/attacks', { filters: 'incoming', limit: 100, sort: 'desc', from: from, to: to, timestamp: nowSec() });
-      const rows = Array.isArray(j.attacks) ? j.attacks : [];
-      if (!rows.length) break;
-      let minTs = Infinity, added = 0;
+      const rows = await attackPage(from, to);
+      if (page === 0) {
+        const first = rows[0];
+        diag.atk = (diag.mode === 'all' ? 'all-attacks mode \u00b7 ' : 'incoming \u00b7 ') + rows.length + ' rows' +
+          (first ? ' \u00b7 fields: ' + Object.keys(first).join(',') : '');
+      }
+      const rawCount = rows._rawCount != null ? rows._rawCount : rows.length;
+      if (!rawCount) break;
+      let minTs = rows._minTs != null ? rows._minTs : Infinity, added = 0;
       rows.forEach((a) => {
         const k = String(a.id);
         if (!seen.has(k)) { seen.set(k, a); added++; }
         minTs = Math.min(minTs, +a.started || Infinity);
       });
-      if (rows.length < 100 || !added || !(minTs > from)) break;
+      if (rawCount < 100 || (!added && rows._minTs == null) || !(minTs > from)) break;
       to = minTs;
     }
     return Array.from(seen.values());
@@ -173,6 +210,7 @@
     try {
       const j = await api('faction/chain', { timestamp: nowSec() });
       const c = (j && (j.chain || j)) || {};
+      diag.chain = JSON.stringify(c).slice(0, 200);
       let left = +c.timeout || 0;
       if (!left && c.end) left = (+c.end) - nowSec();
       chain = (left > 0 && +c.current > 0)
@@ -324,7 +362,7 @@
     if (problem && problem.code === 5) sheet.appendChild(el('div', 'color:#fc6;', 'Rate limited - retrying shortly.'));
     else if (problem) sheet.appendChild(el('div', 'color:#f88;', 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
 
-    if (!data || dataMode !== winMode) { sheet.appendChild(el('div', '', busyAtk ? 'Loading…' : 'No data yet.')); return; }
+    if (!data || dataMode !== winMode) { sheet.appendChild(el('div', '', busyAtk ? 'Loading…' : 'No data yet.')); appendDiag(); return; }
 
     sheet.appendChild(el('div', 'color:#aaa;margin-bottom:6px;',
       data.total + ' attacks on your faction · ' + data.wins + ' landed · ' + data.attackers.length + ' known attackers' +
@@ -388,6 +426,12 @@
     acts.appendChild(btn(busyAtk ? '…' : '🔄', () => fetchAttacks(true)));
     foot.appendChild(acts);
     sheet.appendChild(foot);
+    appendDiag();
+  }
+  function appendDiag() {
+    const d = el('div', 'margin-top:6px;font-size:10px;color:#777;word-break:break-all;');
+    d.textContent = 'Debug \u00b7 chain: ' + (diag.chain || 'n/a') + ' \u00b7 attacks: ' + (diag.atk || 'n/a');
+    sheet.appendChild(d);
   }
 
   // ---- live strip --------------------------------------------------------
@@ -418,7 +462,11 @@
         if (data.recent) border = '#f88';
         else border = '#9d9';
       }
+      if (!data && !problem && busyAtk) text += ' · loading attacks…';
       if (problem && problem.code === 5) text += ' · rate limited';
+      else if (problem) { text += ' · attacks failed: ' + (problem.message || 'error') + (problem.code != null ? ' (' + problem.code + ')' : ''); border = '#f88'; }
+    } else if (chainLoaded) {
+      text = '🛡 Attackers · no live chain (tap)'; color = '#aaa';
     }
     if (!text) { strip.style.display = 'none'; return; }
     if (strip.textContent !== text) strip.textContent = text;
