@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Faction Attackers
 // @namespace    torn-faction-attackers
-// @version      2.0
-// @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
+// @version      2.1
+// @description  While your faction has a live chain, a small strip on the faction page and targets list shows the chain count and timer plus how many hits your faction mates are taking and from whom. Tap it for the full list: repeat attackers, which mates they hit, level, faction, results and profile links. A By faction view groups attackers by their faction, and the strip names the faction behind most of the recent hits, so you can see at a glance whether the people hitting your mates are one faction. Refreshes itself. Uses the official API (faction > chain and attacks; needs a key from someone with faction API access).
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @grant        none
@@ -43,6 +43,7 @@
   }
   const mmss = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   const profileUrl = (id) => 'https://www.torn.com/profiles.php?XID=' + id;
+  const factionUrl = (id) => 'https://www.torn.com/factions.php?step=profile&ID=' + id;
   function el(tag, css, text) {
     const e = document.createElement(tag);
     if (css) e.style.cssText = css;
@@ -100,7 +101,7 @@
   const isWin = (r) => WIN_RE.test(r || '');
 
   function summarise(attacks) {
-    const byAtk = new Map(), byVic = new Map();
+    const byAtk = new Map(), byVic = new Map(), byFac = new Map(), recentFac = new Map();
     let hidden = 0, wins = 0, recent = 0;
     const recentAtk = new Set();
     const cutoff = nowSec() - RECENT_SEC;
@@ -116,17 +117,34 @@
         v.count++; if (win) v.wins++; if (ts > v.last) v.last = ts;
       }
       if (!who || a.is_stealthed || !who.id) { hidden++; return; }
+      const fid = who.faction && who.faction.id ? who.faction.id : 0;
+      const fname = who.faction && who.faction.name ? who.faction.name : 'No faction';
+      let f = byFac.get(fid);
+      if (!f) { f = { id: fid, name: fname, count: 0, wins: 0, last: 0, attackers: new Map(), victims: new Map() }; byFac.set(fid, f); }
+      f.count++; if (win) f.wins++; if (ts > f.last) f.last = ts;
+      f.attackers.set(who.id, who.name || who.id);
+      if (vic && vic.id) f.victims.set(vic.id, vic.name || vic.id);
+      if (ts >= cutoff) {
+        let r = recentFac.get(fid);
+        if (!r) { r = { id: fid, name: fname, count: 0, attackers: new Set() }; recentFac.set(fid, r); }
+        r.count++; r.attackers.add(who.id);
+      }
       let e = byAtk.get(who.id);
       if (!e) {
-        e = { id: who.id, name: who.name, level: who.level, faction: who.faction && who.faction.name, count: 0, wins: 0, last: 0, lastResult: '', victims: new Map() };
+        e = { id: who.id, name: who.name, level: who.level, faction: who.faction && who.faction.name, factionId: fid, count: 0, wins: 0, last: 0, lastResult: '', victims: new Map() };
         byAtk.set(who.id, e);
       }
       e.count++; if (win) e.wins++;
       if (vic && vic.id) e.victims.set(vic.id, vic.name || vic.id);
-      if (ts >= e.last) { e.last = ts; e.lastResult = a.result || ''; e.level = who.level; e.name = who.name; e.faction = who.faction && who.faction.name; }
+      if (ts >= e.last) { e.last = ts; e.lastResult = a.result || ''; e.level = who.level; e.name = who.name; e.faction = who.faction && who.faction.name; e.factionId = fid; }
     });
     const sortFn = (x, y) => (y.count - x.count) || (y.last - x.last);
+    const facs = Array.from(byFac.values()).map((f) => { f.people = f.attackers.size; return f; })
+      .sort((x, y) => (y.count - x.count) || (y.people - x.people) || (y.last - x.last));
+    // Top faction among the recent hits; "No faction" never counts as a group.
+    const topRecent = Array.from(recentFac.values()).filter((r) => r.id).sort((x, y) => (y.count - x.count) || (y.attackers.size - x.attackers.size))[0] || null;
     return {
+      factions: facs, topRecent,
       attackers: Array.from(byAtk.values()).sort(sortFn),
       victims: Array.from(byVic.values()).sort(sortFn),
       hidden, wins, recent, recentAtk: recentAtk.size, total: attacks.length, ts: nowSec(),
@@ -239,6 +257,11 @@
     if (view === 'victims') {
       return [head + ' - by faction mate'].concat(data.victims.map((v) => v.name + ' [' + v.id + '] - hit ' + v.count + 'x (' + v.wins + ' landed)')).join('\n');
     }
+    if (view === 'factions') {
+      return [head + ' - by attacking faction'].concat(data.factions.map((f) =>
+        f.name + (f.id ? ' [' + f.id + ']' : '') + ' - ' + f.count + ' hit' + (f.count === 1 ? '' : 's') + ' by ' + f.people + ' player' + (f.people === 1 ? '' : 's') +
+        ' (' + Array.from(f.attackers.values()).join(', ') + ')' + (f.id ? '\n' + factionUrl(f.id) : ''))).join('\n\n');
+    }
     const blocks = data.attackers.map((e) =>
       e.name + ' [' + e.id + '] - ' + e.count + 'x on ' + Array.from(e.victims.values()).join(', ') + '\nLvl ' + e.level +
       (e.faction ? ' · ' + e.faction : '') + ' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last) + '\n' + profileUrl(e.id));
@@ -294,6 +317,7 @@
     WINDOWS.forEach((w) => ctl.appendChild(btn(w[1], () => { winMode = w[0]; data = null; render(); fetchAttacks(true); }, w[0] === winMode)));
     ctl.appendChild(el('span', 'width:10px;'));
     ctl.appendChild(btn('By attacker', () => { view = 'attackers'; render(); }, view === 'attackers'));
+    ctl.appendChild(btn('By faction', () => { view = 'factions'; render(); }, view === 'factions'));
     ctl.appendChild(btn('By mate', () => { view = 'victims'; render(); }, view === 'victims'));
     sheet.appendChild(ctl);
 
@@ -305,8 +329,30 @@
     sheet.appendChild(el('div', 'color:#aaa;margin-bottom:6px;',
       data.total + ' attacks on your faction · ' + data.wins + ' landed · ' + data.attackers.length + ' known attackers' +
       (data.recent ? ' · ' + data.recent + ' in the last ' + Math.round(RECENT_SEC / 60) + 'm' : '')));
+    const grouped = data.factions.filter((f) => f.id && f.people >= 2);
+    if (grouped.length) {
+      sheet.appendChild(el('div', 'color:#fc6;margin-bottom:6px;', '⚠ Several from one faction: ' +
+        grouped.slice(0, 3).map((f) => f.name + ' (' + f.people + ' players, ' + f.count + ' hits)').join(', ')));
+    }
 
-    if (view === 'victims') {
+    if (view === 'factions') {
+      if (!data.factions.length) sheet.appendChild(el('div', '', data.total ? 'Every attack in this window was anonymous.' : 'No attacks on your faction in this window.'));
+      data.factions.slice(0, MAX_LISTED).forEach((f, i) => {
+        const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
+        if (f.id) row.appendChild(link(factionUrl(f.id), f.name, 'color:#7cf;'));
+        else row.appendChild(el('span', 'color:#bbb;', f.name));
+        row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  ' + f.count + ' hit' + (f.count === 1 ? '' : 's') + (f.id && f.people >= 2 ? ' · ' + f.people + ' players' : '')));
+        row.appendChild(el('div', 'color:#bbb;', f.wins + ' landed · last ' + ago(f.last)));
+        const names = el('div', 'color:#999;font-size:12px;', 'By: ');
+        Array.from(f.attackers.entries()).forEach(([id, nm], k) => {
+          if (k) names.appendChild(document.createTextNode(', '));
+          names.appendChild(link(profileUrl(id), nm, 'color:#7cf;'));
+        });
+        row.appendChild(names);
+        row.appendChild(el('div', 'color:#999;font-size:12px;', 'Hit: ' + Array.from(f.victims.values()).join(', ')));
+        sheet.appendChild(row);
+      });
+    } else if (view === 'victims') {
       if (!data.victims.length) sheet.appendChild(el('div', '', 'No attacks on your faction in this window.'));
       data.victims.slice(0, MAX_LISTED).forEach((v, i) => {
         const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
@@ -321,8 +367,14 @@
         const row = el('div', i ? 'margin-top:6px;padding-top:6px;border-top:1px solid #444;' : '');
         row.appendChild(link(profileUrl(e.id), e.name + ' [' + e.id + ']', 'color:#7cf;'));
         if (e.count > 1) row.appendChild(el('span', 'color:#fc6;font-weight:bold;', '  🔁 ×' + e.count));
-        row.appendChild(el('div', 'color:#bbb;', 'Lvl ' + e.level + (e.faction ? ' · ' + e.faction : ' · no faction') +
-          ' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last)));
+        const info = el('div', 'color:#bbb;', 'Lvl ' + e.level + ' · ');
+        const fac = data.factions.find((f) => f.id && f.id === e.factionId);
+        if (e.faction && fac) {
+          info.appendChild(link(factionUrl(fac.id), e.faction, fac.people >= 2 ? 'color:#fc6;font-weight:bold;' : 'color:#bbb;'));
+          if (fac.people >= 2) info.appendChild(el('span', 'color:#fc6;', ' (' + fac.people + ' of them)'));
+        } else info.appendChild(document.createTextNode(e.faction || 'no faction'));
+        info.appendChild(document.createTextNode(' · last: ' + (e.lastResult || '?') + ' ' + ago(e.last)));
+        row.appendChild(info);
         row.appendChild(el('div', 'color:#999;font-size:12px;', 'Hit: ' + Array.from(e.victims.values()).join(', ')));
         sheet.appendChild(row);
       });
@@ -361,6 +413,8 @@
       if (data) {
         // The strip's own numbers always cover the last RECENT_SEC window, whatever the panel's window is.
         text += ' · ' + (data.recent ? '⚠ ' + data.recent + ' hit' + (data.recent === 1 ? '' : 's') + ' on mates (' + Math.round(RECENT_SEC / 60) + 'm)' : 'no recent hits on mates');
+        const tf = data.topRecent;
+        if (data.recent && tf && (tf.count >= 2 || tf.attackers.size >= 2)) text += ' · ' + tf.count + ' from ' + tf.name;
         if (data.recent) border = '#f88';
         else border = '#9d9';
       }
