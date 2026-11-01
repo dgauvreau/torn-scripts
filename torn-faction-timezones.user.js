@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.6
+// @version      3.7
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -105,7 +105,24 @@
 
   // The thread's own format: "When 00:00 happens in Torn it is 5pm/17:00 for me" (the local time at Torn midnight).
   // That time IS the offset from UTC (17:00 -> UTC-7). With "summer ... winter" answers, the one that applies now is used.
-  function parseClock(text) {
+  // Daylight saving: which rule applies is guessed from the summer offset (US/Canada, Europe, Australia/NZ).
+  function ruleOf(summerMins) {
+    if (summerMins <= -180 && summerMins >= -600) return 'US';
+    if (summerMins >= 0 && summerMins <= 180) return 'EU';
+    if (summerMins >= 480 && summerMins <= 780) return 'AU';
+    return 'N';
+  }
+  function dstActive(rule, ms) {
+    const d = new Date(ms), y = d.getUTCFullYear();
+    const sunday = (yy, mo, n) => { const f = new Date(Date.UTC(yy, mo, 1)).getUTCDay(); return 1 + ((7 - f) % 7) + (n - 1) * 7; };
+    const lastSunday = (yy, mo) => { const last = new Date(Date.UTC(yy, mo + 1, 0)); return last.getUTCDate() - last.getUTCDay(); };
+    const mo = d.getUTCMonth();
+    if (rule === 'US') return ms >= Date.UTC(y, 2, sunday(y, 2, 2), 10) && ms < Date.UTC(y, 10, sunday(y, 10, 1), 6);
+    if (rule === 'EU') return ms >= Date.UTC(y, 2, lastSunday(y, 2), 1) && ms < Date.UTC(y, 9, lastSunday(y, 9), 1);
+    if (rule === 'AU') return mo >= 9 || mo <= 2;
+    return mo >= 3 && mo <= 9;
+  }
+  function parseClock(text, postMs) {
     const lead = /\b(?:torn|tct)\b[^.\n]{0,40}?(?:\b(?:it is|it's|its|is)|=|[a-z]:)\s*(?=\d)|\b(?:midnight|00(?::00)?(?![\d:])|24:00(?!\d)|12\s*am)\b[^.\n]{0,40}?(?:\b(?:it is|it's|its|is|i am|i'm|am)|=)\s*(?=\d)/i.exec(text);
     let start = -1;
     if (lead) start = lead.index + lead[0].length;
@@ -120,7 +137,7 @@
       }
     }
     if (start < 0) return null;
-    const rest = text.slice(start, start + 220);
+    const rest = text.slice(start, start + 220).replace(/\b(?:GMT|UTC|TCT)\s*[+\-\u2212]\s*\d{1,2}(?::?\d{2})?/gi, (mm) => ' '.repeat(mm.length));   // "GMT-7" is a label, not a clock time
     const tre = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?(?:\s*h(?:rs?|ours?)?\b)?/gi;
     const times = [];
     let x;
@@ -131,30 +148,32 @@
       times.push({ idx: x.index, end: x.index + x[0].length, mins: h * 60 + mi });
     }
     if (!times.length) return null;
+    const SUMMER_W = /^(?:summer|dst|daylight|PDT|MDT|CDT|EDT|BST|CEST|EEST|AEDT)$/i;
     const seasons = [];
-    const sre = /\b(summer|winter|dst|daylight|standard)\b/gi;
-    while ((x = sre.exec(rest))) seasons.push({ idx: x.index, summer: /summer|dst|daylight/i.test(x[1]) });
-    let pick = times[0];
-    if (seasons.length > 1) {
-      const seasonOf = (t) => { const sx = seasons.find((q) => q.idx >= t.end && q.idx - t.end < 45); return sx ? sx.summer : null; };
-      const sumT = times.find((t) => seasonOf(t) === true), winT = times.find((t) => seasonOf(t) === false);
-      if (sumT && winT) {
-        const so = sumT.mins > 14 * 60 ? sumT.mins - 1440 : sumT.mins;   // the summer offset, in minutes
-        const d = new Date(), y = d.getUTCFullYear(), nowMs = d.getTime();
-        const sunday = (yy, mo, n) => { const f = new Date(Date.UTC(yy, mo, 1)).getUTCDay(); return 1 + ((7 - f) % 7) + (n - 1) * 7; };   // n-th Sunday of month
-        const lastSunday = (yy, mo) => { const last = new Date(Date.UTC(yy, mo + 1, 0)); return last.getUTCDate() - last.getUTCDay(); };
-        let summerNow;
-        if (so <= -180 && so >= -600) summerNow = nowMs >= Date.UTC(y, 2, sunday(y, 2, 2), 10) && nowMs < Date.UTC(y, 10, sunday(y, 10, 1), 6);   // US/Canada
-        else if (so >= 0 && so <= 180) summerNow = nowMs >= Date.UTC(y, 2, lastSunday(y, 2), 1) && nowMs < Date.UTC(y, 9, lastSunday(y, 9), 1); // Europe
-        else if (so >= 480 && so <= 780) { const mo = d.getUTCMonth(); summerNow = mo >= 9 || mo <= 2; }                                      // Australia / NZ
-        else { const mo = d.getUTCMonth(); summerNow = mo >= 3 && mo <= 9; }
-        pick = summerNow ? sumT : winT;
-      }
+    const sre = /\b(summer|winter|dst|daylight|standard|PDT|MDT|CDT|EDT|BST|CEST|EEST|AEDT|PST|MST|CST|EST|CET|EET|AEST)\b/gi;
+    while ((x = sre.exec(rest))) seasons.push({ idx: x.index, summer: SUMMER_W.test(x[1]) });
+    const norm = (m) => { const o = m === 1440 ? 0 : m; return o > 14 * 60 ? o - 1440 : o; };
+    const seasonOf = (t) => { const sx = seasons.find((q) => q.idx >= t.end && q.idx - t.end < 45); return sx ? sx.summer : null; };
+    const hint = seasons.length > 0 || /\b(?:changes?|depending|\+\/-\s*1)/i.test(rest);
+    let dst = null;
+    let cur = norm(times[0].mins);
+    const sumT = times.find((t) => seasonOf(t) === true), winT = times.find((t) => seasonOf(t) === false);
+    const distinct = [];
+    times.forEach((t) => { const o = norm(t.mins); if (distinct.indexOf(o) < 0) distinct.push(o); });
+    if (sumT && winT && norm(sumT.mins) !== norm(winT.mins)) dst = { summer: norm(sumT.mins), winter: norm(winT.mins) };
+    else if (hint && distinct.length > 1 && Math.abs(distinct[0] - distinct[1]) === 60) dst = { summer: Math.max(distinct[0], distinct[1]), winter: Math.min(distinct[0], distinct[1]) };
+    else if (/\b(?:summer|winter|dst|daylight|changes?|depending|bst|cest|eest|pdt|edt|cdt|mdt)\b|\+\/-\s*1/i.test(rest) && distinct.length === 1 && !/summer\s*(?:and|&|\/|,)\s*winter|winter\s*(?:and|&|\/|,)\s*summer/i.test(rest)) {
+      // one time given, but they say daylight saving moves them: work out which season it was and derive the other
+      const tag = seasonOf(times[0]) !== null ? seasonOf(times[0]) : (seasons.length ? seasons[0].summer : null);
+      if (tag === true) dst = { summer: cur, winter: cur - 60 };
+      else if (tag === false) dst = { summer: cur + 60, winter: cur };
+      else if (postMs) dst = dstActive(ruleOf(cur), postMs) ? { summer: cur, winter: cur - 60 } : { summer: cur + 60, winter: cur };
     }
-    let off = pick.mins === 1440 ? 0 : pick.mins;
-    if (off > 14 * 60) off -= 1440;
-    const sign = off < 0 ? '-' : '+', a = Math.abs(off);
-    return { fixed: off, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, start - 45), start + 60).replace(/\s+/g, ' ').trim() };
+    if (dst) cur = dstActive(ruleOf(dst.summer), Date.now()) ? dst.summer : dst.winter;
+    const sign = cur < 0 ? '-' : '+', a = Math.abs(cur);
+    const out = { fixed: cur, label: 'UTC' + sign + Math.floor(a / 60) + (a % 60 ? ':' + String(a % 60).padStart(2, '0') : ''), snippet: text.slice(Math.max(0, start - 45), start + 60).replace(/\s+/g, ' ').trim() };
+    if (dst) out.dst = dst;
+    return out;
   }
 
   // Last resort: "it's 2pm for me" with no mention of Torn at all means the same thing (the local time when Torn is at 00:00).
@@ -171,9 +190,9 @@
   }
 
   // Best reading of a piece of text: the first time zone it mentions (earliest wins).
-  function parseZone(text) {
+  function parseZone(text, postMs) {
     if (!text) return null;
-    const clock = parseClock(text);
+    const clock = parseClock(text, postMs);
     if (clock) return clock;
     const hits = [];
     const m = OFFSET_RE.exec(text);
@@ -216,7 +235,7 @@
     offsetCache[key] = v;
     return v;
   }
-  const zoneOffset = (z, now) => (z.tz ? tzOffset(z.tz, now) : z.fixed);
+  const zoneOffset = (z, now) => (z.tz ? tzOffset(z.tz, now) : (z.dst ? (dstActive(ruleOf(z.dst.summer), now) ? z.dst.summer : z.dst.winter) : z.fixed));
 
   // Text of a post without quoted replies (so quoting someone else's zone doesn't count).
   function cleanText(html) {
@@ -271,7 +290,7 @@
       const e = members[id] || (members[id] = { id: id, name: a.username || id, zone: null, posts: 0 });
       e.name = a.username || e.name;
       e.posts++;
-      const z = parseZone(cleanText(p.content));
+      const z = parseZone(cleanText(p.content), (+p.created_time || 0) * 1000);
       if (z) e.zone = z; // a later post with a zone replaces an earlier one
     });
     return { tid: tid, ts: Math.floor(Date.now() / 1000), postCount: posts.length, capped: capped, members: members };
@@ -348,7 +367,9 @@
       const e = members[u.id] || (members[u.id] = { id: u.id, name: nm || u.id, zone: null, posts: 0 });
       if (!generic(nm) && (generic(e.name) || e.name === u.id)) e.name = nm;
       e.posts++; found++;
-      const z = parseZone(text) || parseZone(full);
+      const dm = /(?:Posted on|Thread created on)\s+\d\d:\d\d:\d\d\s*-\s*(\d\d)\/(\d\d)\/(\d\d)/.exec(u.box.textContent || '');
+      const postMs = dm ? Date.UTC(2000 + +dm[3], +dm[2] - 1, +dm[1], 12) : 0;
+      const z = parseZone(text, postMs) || parseZone(full, postMs);
       if (z) e.zone = z;
       else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
     });
@@ -443,6 +464,7 @@
       const m = Object.assign({}, data.members[id]);
       if (overrides[id]) { const z = parseZone(overrides[id]); if (z) { m.zone = z; m.fromEdit = true; } }
       m.off = m.zone ? zoneOffset(m.zone, now) : null;
+      if (m.zone && m.zone.dst && m.off !== null) m.zone = Object.assign({}, m.zone, { label: offText(m.off) });
       out.push(m);
     });
     return out;
