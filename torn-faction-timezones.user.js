@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.10
+// @version      3.11
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -22,6 +22,11 @@
   const THREAD_SLOT = 'tz_thread';
   const CACHE_SLOT = 'tz_cache';
   const SCHEMA = 2;   // bump when what is stored per member changes, so older saved reads are discarded
+  // Fixed rules for members whose situation the thread does not show. A rule applies until that member posts a zone
+  // answer dated on or after `since` - then their newer post wins. (A zone set by hand with the pencil beats both.)
+  const RULES = [
+    { name: 'AriaJ', fixed: -360, note: 'Alberta, Canada - stopped changing clocks, stays on summer time (UTC\u22126)', since: Date.UTC(2026, 10, 1) }
+  ];
   const OVERRIDE_SLOT = 'tz_over';
   const OWN_SLOT = 'tz_key';
 
@@ -292,7 +297,7 @@
       e.name = a.username || e.name;
       e.posts++;
       const z = parseZone(cleanText(p.content), (+p.created_time || 0) * 1000);
-      if (z) e.zone = z; // a later post with a zone replaces an earlier one
+      if (z) { e.zone = z; e.zoneMs = (+p.created_time || 0) * 1000; } // a later post with a zone replaces an earlier one
     });
     return { v: SCHEMA, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: posts.length, capped: capped, members: members };
   }
@@ -358,7 +363,7 @@
       const dm = /(?:Posted on|Thread created on)\s+\d\d:\d\d:\d\d\s*-\s*(\d\d)\/(\d\d)\/(\d\d)/.exec(u.box.textContent || '');
       const postMs = dm ? Date.UTC(2000 + +dm[3], +dm[2] - 1, +dm[1], 12) : 0;
       const z = parseZone(text, postMs) || parseZone(full, postMs);
-      if (z) e.zone = z;
+      if (z) { e.zone = z; if (postMs) e.zoneMs = postMs; }
       else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
     });
     return { v: SCHEMA, found: found, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
@@ -446,6 +451,7 @@
     pen.addEventListener('click', (e) => { e.stopPropagation(); editZone(m); });
     w.appendChild(a); w.appendChild(pen);
     if (m.fromEdit) w.appendChild(el('span', 'color:#fc6;font-size:10px;', '\u2605'));
+    if (m.fromRule) w.appendChild(el('span', 'color:#9cf;font-size:10px;', '\u2691'));
     return w;
   }
 
@@ -455,6 +461,10 @@
     Object.keys(data.members).forEach((id) => {
       const m = Object.assign({}, data.members[id]);
       if (overrides[id]) { const z = parseZone(overrides[id]); if (z) { m.zone = z; m.fromEdit = true; } }
+      else {
+        const rule = RULES.find((r) => r.name.toLowerCase() === String(m.name || '').toLowerCase());
+        if (rule && !(m.zoneMs && m.zoneMs >= rule.since)) { m.zone = { fixed: rule.fixed, label: offText(rule.fixed), snippet: rule.note }; m.fromRule = true; }
+      }
       m.off = m.zone ? zoneOffset(m.zone, now) : null;
       if (m.zone && m.zone.dst && m.off !== null) m.zone = Object.assign({}, m.zone, { label: offText(m.off) });
       out.push(m);
