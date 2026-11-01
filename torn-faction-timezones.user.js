@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.7
+// @version      3.8
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -21,6 +21,7 @@
   const AWAKE_TO = 23;             // ...until this local hour
   const THREAD_SLOT = 'tz_thread';
   const CACHE_SLOT = 'tz_cache';
+  const SCHEMA = 2;   // bump when what is stored per member changes, so older saved reads are discarded
   const OVERRIDE_SLOT = 'tz_over';
   const OWN_SLOT = 'tz_key';
 
@@ -293,7 +294,7 @@
       const z = parseZone(cleanText(p.content), (+p.created_time || 0) * 1000);
       if (z) e.zone = z; // a later post with a zone replaces an earlier one
     });
-    return { tid: tid, ts: Math.floor(Date.now() / 1000), postCount: posts.length, capped: capped, members: members };
+    return { v: SCHEMA, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: posts.length, capped: capped, members: members };
   }
 
   // ---- state -------------------------------------------------------------
@@ -304,7 +305,7 @@
   let busy = false, progressN = 0;
   let overrides = {};
   try { overrides = JSON.parse(readSlot(OVERRIDE_SLOT) || '{}') || {}; } catch (e) { overrides = {}; }
-  try { const c = JSON.parse(readSlot(CACHE_SLOT) || 'null'); if (c && c.members) data = c; } catch (e) { data = null; }
+  try { const c = JSON.parse(readSlot(CACHE_SLOT) || 'null'); if (c && c.members && c.v === SCHEMA) data = c; } catch (e) { data = null; }
   let tid = readSlot(THREAD_SLOT);
 
   // Faction forum threads are not served by the API (it answers "Incorrect ID"), so read the posts shown on the page instead.
@@ -316,14 +317,15 @@
     const idOf = (a) => { const m = /XID=(\d+)/.exec(a.getAttribute('href') || ''); return m ? m[1] : ''; };
     // Method 1: every post carries a "Posted on ..." / "Thread created on ..." line. Find those, take the post block around each.
     const MARK = /(?:Posted on|Thread created on)\s+\d/g;
-    const allLinks = Array.prototype.slice.call(document.querySelectorAll(XID));
+    const allLinks = Array.prototype.slice.call(document.querySelectorAll(XID)).filter((a) => !overlay.contains(a));   // never read this script's own panel
     const walker = document.createTreeWalker(document.body, 4, null);
     let node;
     while ((node = walker.nextNode())) {
-      if (!/^\s*(?:Posted on|Thread created on)\s+\d/.test(node.nodeValue || '')) continue;
+      if (!/^\s*(?:Posted on|Thread created on)\s+\d/.test(node.nodeValue || '') || overlay.contains(node)) continue;
       let box = node.parentElement;
       while (box.parentElement && box.parentElement !== document.body) {
         const up = box.parentElement;
+        if (up.contains(overlay)) break;
         const marks = (up.textContent || '').match(MARK);
         if (marks && marks.length > 1) break;
         box = up;
@@ -355,9 +357,12 @@
     let found = 0;
     units.forEach((u) => {
       const clone = u.box.cloneNode(true);
+      Array.prototype.forEach.call(clone.querySelectorAll('[data-tz-overlay]'), (n) => n.remove());
+      const dates = /(?:Posted on|Thread created on|Last (?:edited by \S+|replied)(?: on)?)\s+\d\d:\d\d:\d\d\s*-\s*\d\d\/\d\d\/\d\d(?:\s*\([^)]*\))?/g;
+      const fullText = (clone.textContent || '').replace(/ /g, ' ');
       Array.prototype.forEach.call(clone.querySelectorAll('blockquote, [class*="quote"], [class*="Quote"], script, style'), (n) => n.remove());
-      const text = (clone.textContent || '').replace(/ /g, ' ');
-      const full = (u.box.textContent || '').replace(/ /g, ' ');
+      const text = (clone.textContent || '').replace(/ /g, ' ').replace(dates, ' ');
+      const full = fullText.replace(dates, ' ');
       let nm = u.name;
       const generic = (t) => !t || /^\s*view profile\s*$/i.test(t);
       if (generic(nm)) {
@@ -373,7 +378,7 @@
       if (z) e.zone = z;
       else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
     });
-    return { tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
+    return { v: SCHEMA, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
   }
 
 
@@ -388,7 +393,7 @@
     } catch (err) {
       if (err.code === 6) {
         try {
-          const base = data && data.tid === tid && data.scraped ? data : null;
+          const base = data && data.v === SCHEMA && data.tid === tid && data.scraped ? data : null;
           data = scrapePage(base);
           if (!data.postCount) { data = null; problem = { code: 'noposts' }; }
           else writeSlot(CACHE_SLOT, JSON.stringify(data));
@@ -401,6 +406,7 @@
 
   // ---- overlay -----------------------------------------------------------
   const overlay = document.createElement('div');
+  overlay.setAttribute('data-tz-overlay', '1');
   overlay.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(0,0,0,.6);overflow:auto;-webkit-overflow-scrolling:touch;';
   const sheet = document.createElement('div');
   sheet.style.cssText = 'margin:40px auto;padding:10px 12px;background:#1a1a1a;color:#ccc;width:94%;max-width:520px;box-sizing:border-box;border:1px solid #777;border-radius:8px;font:13px sans-serif;line-height:1.5;';
