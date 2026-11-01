@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Time Zones
 // @namespace    torn-faction-timezones
-// @version      3.9
+// @version      3.10
 // @description  On the forums, adds a "Time Zones" button. It reads your faction's time zone thread through the official API (forum > posts, any key works), works out each poster's time zone from what they wrote, and draws a map: members per UTC offset with day/night shading, a 24-hour TCT coverage strip (how many are awake each hour), and the member list grouped by zone. Tap a name's pencil to fix a zone by hand.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -337,22 +337,6 @@
       }
       if (link && idOf(link)) units.push({ id: idOf(link), name: ((/^\s*view profile\s*$/i.test(link.textContent || '') ? '' : (link.textContent || '')).trim()) || ((link.querySelector('img') || {}).alt || link.getAttribute('title') || '').trim() || '', box: box, link: link });
     }
-    // Method 2 (only if method 1 found nothing): climb from each poster link.
-    if (!units.length) {
-      allLinks.forEach((a) => {
-        const id = idOf(a);
-        if (!id) return;
-        let box = a.parentElement, best = null;
-        for (let i = 0; i < 8 && box && box !== document.body; i++) {
-          const ids = {};
-          Array.prototype.forEach.call(box.querySelectorAll(XID), (x) => { ids[idOf(x)] = 1; });
-          if (Object.keys(ids).length > 1) break;
-          if ((box.textContent || '').trim().length > 80) best = box;
-          box = box.parentElement;
-        }
-        if (best && !units.some((u) => u.box === best)) units.push({ id: id, name: (a.textContent || '').trim(), box: best });
-      });
-    }
     let found = 0;
     units.forEach((u) => {
       const clone = u.box.cloneNode(true);
@@ -377,7 +361,7 @@
       if (z) e.zone = z;
       else e.sample = full.replace(/\s+/g, ' ').trim().slice(0, 90);
     });
-    return { v: SCHEMA, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
+    return { v: SCHEMA, found: found, tid: tid, ts: Math.floor(Date.now() / 1000), postCount: (base ? base.postCount || 0 : 0) + found, capped: false, scraped: true, members: members };
   }
 
 
@@ -392,10 +376,13 @@
     } catch (err) {
       if (err.code === 6) {
         try {
-          const base = data && data.v === SCHEMA && data.tid === tid && data.scraped ? data : null;
-          data = scrapePage(base);
-          if (!data.postCount) { data = null; problem = { code: 'noposts' }; }
-          else writeSlot(CACHE_SLOT, JSON.stringify(data));
+          if (threadIdHere() !== tid) problem = { code: 'notthread' };
+          else {
+            const base = data && data.v === SCHEMA && data.tid === tid && data.scraped ? data : null;
+            const res = scrapePage(base);
+            if (!res.found) problem = { code: 'noposts' };
+            else { data = res; writeSlot(CACHE_SLOT, JSON.stringify(data)); }
+          }
         } catch (e2) { problem = { code: 'scrape', message: String(e2 && e2.message || e2) }; }
       } else problem = { code: err.code, message: err.message };
     }
@@ -725,6 +712,7 @@
 
     if (problem && problem.code === 'nothread') { sheet.appendChild(setupBlock('Which thread holds everyone\u2019s time zone?', 'Pick the thread', pickThread)); return; }
     if (problem && problem.code === 'nokey') { sheet.appendChild(setupBlock('This map needs an API key (any key works).', 'Enter key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
+    if (problem && problem.code === 'notthread') { sheet.appendChild(el('div', 'color:#fc6;', 'Open the time zone thread itself (the page with its posts), then tap Time Zones again. This page is not that thread.')); if (!data) return; }
     if (problem && (problem.code === 'noposts' || problem.code === 'scrape')) { sheet.appendChild(el('div', 'color:#f88;', problem.code === 'noposts' ? 'No posts found on this page. Scroll to the posts, then tap Time Zones again.' : 'Could not read the page: ' + problem.message)); return; }
     if (problem && problem.code === 6) {
       let h = '';
@@ -733,7 +721,7 @@
       return;
     }
     if (problem && problem.code === 2) { sheet.appendChild(setupBlock('Torn didn\u2019t accept the key.', 'Enter a new key', () => { if (askKey()) { problem = null; refresh(); } })); return; }
-    if (problem) sheet.appendChild(el('div', 'color:' + (problem.code === 5 ? '#fc6' : '#f88') + ';', problem.code === 5 ? 'Rate limited - try again in a minute.' : 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
+    if (problem && problem.code !== 'notthread') sheet.appendChild(el('div', 'color:' + (problem.code === 5 ? '#fc6' : '#f88') + ';', problem.code === 5 ? 'Rate limited - try again in a minute.' : 'API error: ' + problem.message + (problem.code != null ? ' (code ' + problem.code + ')' : '')));
 
     if (busy) sheet.appendChild(el('div', 'color:#9d9;', 'Reading the thread\u2026 ' + progressN + ' posts so far'));
     if (!data) { if (!busy && !problem) sheet.appendChild(el('div', '', 'No data yet.')); return; }
